@@ -1,10 +1,13 @@
 //! Runs one strategy over each symbol independently: fresh cash, broker and strategy per symbol.
 
+use std::collections::BTreeSet;
+
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use tq_backtest::{run, RunConfig, RunReport, Sizing};
 use tq_broker::Paper;
-use tq_core::{Bar, Symbol};
-use tq_data::{ist_close_ts, BarSource, CsvDaily};
+use tq_core::{Bar, Symbol, Timestamp};
+use tq_data::{ist_close_ts, ist_date, BarSource, CsvDaily};
 use tq_risk::{RiskGate, RiskLimits};
 use tq_strategies::{DonchianBreakout, TrendPullback};
 use tq_strategy::Strategy;
@@ -38,6 +41,7 @@ impl Setup {
             sizing: Sizing::RiskPct(args.risk_pct),
             slippage_bps: args.slippage_bps,
             trade_from: ist_close_ts(args.start),
+            entry_windows: None,
         };
         Ok(Self {
             gate: RiskGate::new(limits),
@@ -48,24 +52,31 @@ impl Setup {
         })
     }
 
-    pub fn run_all(&self, symbols: &[String]) -> Vec<SymbolResult> {
-        symbols
-            .iter()
-            .map(|s| SymbolResult { symbol: s.clone(), outcome: self.run_symbol(s) })
+    /// Runs each ticker; `Some(windows)` restricts when its entries may fill (index membership).
+    pub fn run_all(&self, plan: &[(String, EntryWindows)]) -> Vec<SymbolResult> {
+        plan.iter()
+            .map(|(s, windows)| SymbolResult { symbol: s.clone(), outcome: self.run_symbol(s, windows) })
             .collect()
     }
 
-    fn run_symbol(&self, ticker: &str) -> Result<RunReport, String> {
+    /// IST dates of `ticker`'s bars up to `--end`; `None` if the file is missing or unreadable.
+    pub fn bar_dates(&self, ticker: &str) -> Option<BTreeSet<NaiveDate>> {
+        let bars = self.source.bars(&Symbol(format!("NSE:{ticker}"))).ok()?;
+        Some(bars.iter().take_while(|b| b.ts <= self.end_ts).filter_map(|b| ist_date(b.ts)).collect())
+    }
+
+    fn run_symbol(&self, ticker: &str, windows: &EntryWindows) -> Result<RunReport, String> {
         let symbol = Symbol(format!("NSE:{ticker}"));
         let bars = self.load(&symbol)?;
+        let config = RunConfig { entry_windows: windows.clone(), ..self.config.clone() };
         match self.strategy {
             StrategyName::TrendPullback => {
                 let s = TrendPullback::new(Default::default()).map_err(|e| e.to_string())?;
-                self.run_with(s, &symbol, &bars)
+                run_with(s, &self.gate, &config, &symbol, &bars)
             }
             StrategyName::Donchian => {
                 let s = DonchianBreakout::new(Default::default()).map_err(|e| e.to_string())?;
-                self.run_with(s, &symbol, &bars)
+                run_with(s, &self.gate, &config, &symbol, &bars)
             }
         }
     }
@@ -79,9 +90,12 @@ impl Setup {
         }
         Ok(bars)
     }
+}
 
-    fn run_with<S: Strategy>(&self, mut strategy: S, symbol: &Symbol, bars: &[Bar]) -> Result<RunReport, String> {
-        let mut broker = Paper::default();
-        run(&mut strategy, &mut broker, &self.gate, &self.config, symbol, bars).map_err(|e| e.to_string())
-    }
+/// Fill-time windows in which entries are allowed; `None` = always.
+pub type EntryWindows = Option<Vec<(Timestamp, Timestamp)>>;
+
+fn run_with<S: Strategy>(mut strategy: S, gate: &RiskGate, config: &RunConfig, symbol: &Symbol, bars: &[Bar]) -> Result<RunReport, String> {
+    let mut broker = Paper::default();
+    run(&mut strategy, &mut broker, gate, config, symbol, bars).map_err(|e| e.to_string())
 }

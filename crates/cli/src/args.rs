@@ -53,8 +53,15 @@ pub struct BacktestArgs {
     #[arg(long)]
     pub data_dir: PathBuf,
     /// Comma-separated NSE tickers, or @path to a file with one ticker per line (# comments).
+    #[arg(long, required_unless_present = "universe_file", conflicts_with = "universe_file")]
+    pub symbols: Option<String>,
+    /// Point-in-time membership CSV (`date,symbol` snapshots). Runs every symbol that was a member
+    /// during the window and lets it be ENTERED only while a member; exits are never restricted.
     #[arg(long)]
-    pub symbols: String,
+    pub universe_file: Option<PathBuf>,
+    /// `symbol,price_symbol,note` CSV mapping membership symbols to price files (renames).
+    #[arg(long)]
+    pub aliases: Option<PathBuf>,
     /// First trading day, YYYY-MM-DD. Earlier bars in the file only warm up indicators.
     #[arg(long)]
     pub start: NaiveDate,
@@ -82,6 +89,9 @@ pub struct BacktestArgs {
 
 /// Refuses any run that would read held-out data unless the operator says so explicitly.
 pub fn check_holdout(args: &BacktestArgs) -> Result<(), CliError> {
+    if args.aliases.is_some() && args.universe_file.is_none() {
+        return Err(CliError::Usage("--aliases only applies with --universe-file".into()));
+    }
     if args.start > args.end {
         return Err(CliError::Usage(format!("--start {} is after --end {}", args.start, args.end)));
     }
@@ -151,6 +161,20 @@ mod tests {
     #[test]
     fn rejects_start_after_end() {
         assert!(check_holdout(&args(&["--start", "2015-01-01", "--end", "2014-01-01"])).is_err());
+    }
+
+    #[test]
+    fn symbols_and_universe_file_are_mutually_exclusive_but_one_is_required() {
+        let base = ["tq", "backtest", "--strategy", "donchian", "--data-dir", "d", "--start", "2012-01-01", "--end", "2013-01-01"];
+        let parse = |extra: &[&str]| Cli::try_parse_from(base.iter().chain(extra)).is_ok();
+        assert!(!parse(&[]));
+        assert!(parse(&["--universe-file", "m.csv", "--aliases", "a.csv"]));
+        assert!(!parse(&["--universe-file", "m.csv", "--symbols", "INFY"]));
+    }
+
+    #[test]
+    fn aliases_without_universe_file_are_refused() {
+        assert!(check_holdout(&args(&["--start", "2012-01-01", "--end", "2013-01-01", "--aliases", "a.csv"])).is_err());
     }
 
     #[test]

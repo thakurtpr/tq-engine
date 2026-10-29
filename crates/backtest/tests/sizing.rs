@@ -121,3 +121,23 @@ fn rejects_non_positive_risk_or_negative_slippage() {
         assert!(matches!(r, Err(BacktestError::InvalidConfig(_))), "{r:?}");
     }
 }
+
+#[test]
+fn entries_fill_only_inside_entry_windows() {
+    // Member for fills at ts 2..4 (half-open). Signal at 0 fills at 1: outside, skipped.
+    // Signal at 2 fills at 3: inside.
+    let config = RunConfig { entry_windows: Some(vec![(2, 4)]), ..risk(dec!(0.5)) };
+    let bars: Vec<Bar> = (0..5).map(|ts| flat(ts, dec!(100))).collect();
+    let (r, p) = go(vec![(0, enter(dec!(100), dec!(95))), (2, enter(dec!(100), dec!(95)))], &config, &bars);
+    assert_eq!(r.entries_outside_universe, 1);
+    assert_eq!(p.fills().iter().map(|f| f.ts).collect::<Vec<_>>(), vec![3]);
+}
+
+#[test]
+fn exits_are_allowed_after_the_entry_window_closes() {
+    let config = RunConfig { entry_windows: Some(vec![(1, 2)]), ..risk(dec!(0.5)) };
+    let bars: Vec<Bar> = (0..5).map(|ts| flat(ts, dec!(100))).collect();
+    let (r, _) = go(vec![(0, enter(dec!(100), dec!(95))), (3, Signal::Exit(x()))], &config, &bars);
+    assert_eq!(r.trades.len(), 1);
+    assert_eq!((r.trades[0].entry_ts, r.trades[0].exit_ts), (1, 4));
+}

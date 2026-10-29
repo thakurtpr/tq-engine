@@ -131,6 +131,9 @@ impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
     }
 
     fn open(&mut self, approved: ApprovedOrder, bar: &Bar) {
+        if !self.config.entry_allowed(bar.ts) {
+            return self.report.entries_outside_universe += 1;
+        }
         let price = self.config.slipped(bar.open, Side::Buy);
         let approved = match self.size_at_fill(approved, price) {
             Ok(Some(a)) => a,

@@ -9,6 +9,7 @@ use tq_data::ist_date;
 use crate::args::BacktestArgs;
 use crate::backtest::Setup;
 use crate::stats::{Pooled, SymbolResult, TOP_TRADES_DROPPED};
+use crate::universe::Coverage;
 
 const NA: &str = "n/a";
 
@@ -24,10 +25,13 @@ fn opt_f64(x: Option<f64>) -> String {
     x.map_or_else(|| NA.to_string(), |v| format!("{v:.2}"))
 }
 
-pub fn render(args: &BacktestArgs, setup: &Setup, results: &[SymbolResult], pooled: &Pooled) -> String {
+pub fn render(args: &BacktestArgs, setup: &Setup, results: &[SymbolResult], pooled: &Pooled, coverage: Option<&Coverage>) -> String {
     let mut out = String::new();
     // Writing to a String cannot fail; the results are ignored on purpose.
     let _ = write_header(&mut out, args, setup);
+    if let Some(c) = coverage {
+        let _ = write_coverage(&mut out, c);
+    }
     let _ = write_pooled(&mut out, pooled);
     let _ = write_symbols(&mut out, results);
     out
@@ -45,6 +49,18 @@ fn write_header(out: &mut String, args: &BacktestArgs, setup: &Setup) -> std::fm
         l.max_risk_per_trade_pct, l.max_position_notional_pct, l.max_daily_loss_pct, l.max_drawdown_pct
     )?;
     writeln!(out, "- Each symbol runs independently with fresh cash; strategy parameters are defaults.\n")
+}
+
+fn write_coverage(out: &mut String, c: &Coverage) -> std::fmt::Result {
+    let pct = if c.member_days == 0 { Decimal::ZERO } else { Decimal::from(c.covered_days) * Decimal::ONE_HUNDRED / Decimal::from(c.member_days) };
+    writeln!(out, "## Point-in-time universe coverage\n")?;
+    writeln!(out, "Entries only while an index member; exits always allowed.\n")?;
+    writeln!(out, "Member-days with price data: **{} of {} ({}%)**.\n", c.covered_days, c.member_days, dec(pct))?;
+    writeln!(out, "| Member symbol | Price file | Member-days missing | Member-days |\n| --- | --- | ---: | ---: |")?;
+    for m in &c.missing {
+        writeln!(out, "| {} | {} | {} | {} |", m.symbol, m.price_symbol, m.missing_days, m.member_days)?;
+    }
+    writeln!(out)
 }
 
 fn write_pooled(out: &mut String, p: &Pooled) -> std::fmt::Result {
@@ -73,8 +89,8 @@ fn write_pooled(out: &mut String, p: &Pooled) -> std::fmt::Result {
 
 fn write_symbols(out: &mut String, results: &[SymbolResult]) -> std::fmt::Result {
     writeln!(out, "## Per symbol\n")?;
-    writeln!(out, "| Symbol | Bars | Trades | Win % | PF | Net P&L (Rs) | Return % | Max DD % | Sharpe | Kill switch | Rejected | Size 0 |")?;
-    writeln!(out, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |")?;
+    writeln!(out, "| Symbol | Bars | Trades | Win % | PF | Net P&L (Rs) | Return % | Max DD % | Sharpe | Kill switch | Rejected | Size 0 | Non-member |")?;
+    writeln!(out, "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |")?;
     let mut skipped = Vec::new();
     for r in results {
         match &r.outcome {
@@ -93,7 +109,7 @@ fn symbol_row(symbol: &str, r: &RunReport) -> String {
     let net: Decimal = r.trades.iter().map(|t| t.net_pnl).sum();
     let kill = r.kill_switch_engaged_at.and_then(ist_date).map_or_else(|| "-".to_string(), |d| d.to_string());
     format!(
-        "| {symbol} | {} | {} | {} | {} | {} | {} | {} | {} | {kill} | {} | {} |",
+        "| {symbol} | {} | {} | {} | {} | {} | {} | {} | {} | {kill} | {} | {} | {} |",
         r.bars,
         m.trades,
         dec(m.win_rate_pct),
@@ -104,6 +120,7 @@ fn symbol_row(symbol: &str, r: &RunReport) -> String {
         opt_f64(m.sharpe),
         r.rejections.len(),
         r.entries_sized_to_zero,
+        r.entries_outside_universe,
     )
 }
 

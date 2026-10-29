@@ -31,6 +31,9 @@ pub struct RunConfig {
     pub slippage_bps: Decimal,
     /// Bars before this timestamp only warm up the strategy: no orders, no equity points.
     pub trade_from: Timestamp,
+    /// Half-open `[from, to)` timestamp windows in which an entry may FILL (e.g. index membership).
+    /// `None` allows entries at any time. Exits are never restricted.
+    pub entry_windows: Option<Vec<(Timestamp, Timestamp)>>,
 }
 
 impl RunConfig {
@@ -41,6 +44,7 @@ impl RunConfig {
             sizing: Sizing::RiskPct(DEFAULT_RISK_PCT),
             slippage_bps: DEFAULT_SLIPPAGE_BPS,
             trade_from: Timestamp::MIN,
+            entry_windows: None,
         }
     }
 
@@ -55,6 +59,11 @@ impl RunConfig {
             return Err(BacktestError::InvalidConfig("slippage must not be negative"));
         }
         Ok(())
+    }
+
+    /// Whether an entry may fill at `ts`.
+    pub(crate) fn entry_allowed(&self, ts: Timestamp) -> bool {
+        self.entry_windows.as_ref().is_none_or(|w| w.iter().any(|&(from, to)| from <= ts && ts < to))
     }
 
     /// `price` moved against the trader by the slippage.

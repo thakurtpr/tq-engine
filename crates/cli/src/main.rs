@@ -4,6 +4,7 @@ mod args;
 mod backtest;
 mod markdown;
 mod stats;
+mod universe;
 
 use std::fs;
 use std::process::ExitCode;
@@ -15,7 +16,8 @@ use tq_data::{quality_report, BarSource, CsvDaily};
 use tq_risk::RiskLimits;
 
 use crate::args::{check_holdout, parse_symbols, BacktestArgs, Cli, Command, QualityArgs};
-use crate::backtest::Setup;
+use crate::backtest::{EntryWindows, Setup};
+use crate::universe::{Coverage, Universe};
 
 #[derive(Debug, Error)]
 pub enum CliError {
@@ -55,11 +57,11 @@ fn banner() {
 
 fn backtest(args: &BacktestArgs) -> Result<(), CliError> {
     check_holdout(args)?;
-    let symbols = parse_symbols(&args.symbols)?;
     let setup = Setup::from_args(args)?;
-    let results = setup.run_all(&symbols);
+    let (plan, coverage) = plan(args, &setup)?;
+    let results = setup.run_all(&plan);
     let pooled = stats::pool(&results);
-    let report = markdown::render(args, &setup, &results, &pooled);
+    let report = markdown::render(args, &setup, &results, &pooled, coverage.as_ref());
     match &args.out {
         Some(path) => {
             fs::write(path, &report).map_err(|e| CliError::Write { path: path.display().to_string(), msg: e.to_string() })?;
@@ -68,6 +70,23 @@ fn backtest(args: &BacktestArgs) -> Result<(), CliError> {
         None => print!("{report}"),
     }
     Ok(())
+}
+
+/// Symbols to run with their entry windows, plus member-day coverage for a point-in-time universe.
+/// Tickers with their entry windows, and coverage when the universe is point-in-time.
+type Plan = (Vec<(String, EntryWindows)>, Option<Coverage>);
+
+fn plan(args: &BacktestArgs, setup: &Setup) -> Result<Plan, CliError> {
+    let Some(path) = &args.universe_file else {
+        let spec = args.symbols.as_deref().unwrap_or_default();
+        return Ok((parse_symbols(spec)?.into_iter().map(|s| (s, None)).collect(), None));
+    };
+    let universe = Universe::load(path, args.aliases.as_deref())?;
+    let planned = universe.plan(args.start, args.end);
+    let calendar = planned.iter().filter_map(|p| setup.bar_dates(&p.price_symbol)).flatten().collect();
+    let coverage = universe.coverage(args.start, args.end, &calendar, |s| setup.bar_dates(s));
+    let plan = planned.into_iter().map(|p| (p.price_symbol, Some(p.entry_windows))).collect();
+    Ok((plan, Some(coverage)))
 }
 
 fn quality(args: &QualityArgs) -> Result<(), CliError> {

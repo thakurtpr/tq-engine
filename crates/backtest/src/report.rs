@@ -57,6 +57,8 @@ pub struct RunReport {
     pub duplicate_entries_ignored: usize,
     /// Approved entries skipped at the fill because the risk budget bought zero whole shares.
     pub entries_sized_to_zero: usize,
+    /// Approved entries skipped at the fill because the fill date was outside `entry_windows`.
+    pub entries_outside_universe: usize,
     pub rejections: Vec<String>,
     /// Bar at which the drawdown limit engaged the kill switch, if it did.
     pub kill_switch_engaged_at: Option<Timestamp>,
