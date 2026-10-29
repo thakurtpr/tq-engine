@@ -1,5 +1,13 @@
 //! Market data sources. Kite historical, bhavcopy and Parquet loaders implement `BarSource` later.
 
+mod csv_daily;
+mod quality;
+mod time;
+
+pub use csv_daily::CsvDaily;
+pub use quality::{quality_report, Gap, Jump, QualityReport, GAP_THRESHOLD_DAYS, JUMP_THRESHOLD};
+pub use time::{ist_close_ts, ist_date};
+
 use thiserror::Error;
 use tq_core::{Bar, Symbol};
 
@@ -9,6 +17,18 @@ pub enum DataError {
     NotFound(String),
     #[error("bars out of time order at index {0}")]
     Unordered(usize),
+    #[error("symbol `{0}` cannot be mapped to a data file")]
+    InvalidSymbol(String),
+    #[error("cannot read {file}: {msg}")]
+    Io { file: String, msg: String },
+    #[error("{file}:{line}: {msg}")]
+    Parse {
+        file: String,
+        line: u64,
+        msg: String,
+    },
+    #[error("timestamp {0} is outside the supported calendar range")]
+    BadTimestamp(i64),
 }
 
 pub trait BarSource {
@@ -38,6 +58,8 @@ impl BarSource for InMemory {
         if *symbol != self.symbol {
             return Err(DataError::NotFound(symbol.0.clone()));
         }
+        // TODO: this clones the whole series on every call. Return a borrowed slice or
+        // `Arc<[Bar]>` once callers of `BarSource::bars` can take that; signature kept for now.
         Ok(self.bars.clone())
     }
 }
