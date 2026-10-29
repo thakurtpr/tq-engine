@@ -1,0 +1,15 @@
+[package]
+name = "tq-backtest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tq-core.workspace = true
+tq-strategy.workspace = true
+tq-risk.workspace = true
+tq-broker.workspace = true
+rust_decimal.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true

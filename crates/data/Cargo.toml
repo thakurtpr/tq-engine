@@ -1,0 +1,13 @@
+[package]
+name = "tq-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tq-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
+rust_decimal.workspace = true

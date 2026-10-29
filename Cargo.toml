@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+rust_decimal = "1.36"
+rust_decimal_macros = "1.36"
+thiserror = "1"
+tq-core = { path = "crates/core" }
+tq-risk = { path = "crates/risk" }
+tq-strategy = { path = "crates/strategy" }
+tq-broker = { path = "crates/broker" }
+tq-indicators = { path = "crates/indicators" }
+tq-data = { path = "crates/data" }
+tq-costs = { path = "crates/costs" }
+tq-strategies = { path = "crates/strategies" }
+tq-backtest = { path = "crates/backtest" }
