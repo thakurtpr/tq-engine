@@ -4,7 +4,7 @@
 use tq_broker::Broker;
 use tq_core::{Bar, Symbol};
 use tq_risk::{AccountState, RiskGate};
-use tq_strategy::Strategy;
+use tq_strategy::{Signal, Strategy};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RunReport {
@@ -26,7 +26,9 @@ pub fn run<S: Strategy, B: Broker>(
 ) -> RunReport {
     let mut report = RunReport { bars: bars.len(), ..Default::default() };
     for (bar, next) in bars.iter().zip(bars.iter().skip(1)) {
-        for order in strategy.on_bar(symbol, bar) {
+        for signal in strategy.on_bar(symbol, bar) {
+            // TODO(backtest engineer): handle Signal::Exit and track positions.
+            let Signal::Enter(order) = signal else { continue };
             report.orders_proposed += 1;
             let approved = match gate.check(order, acct) {
                 Ok(a) => a,
@@ -62,8 +64,8 @@ mod tests {
         fn name(&self) -> &str {
             "buy-every-bar"
         }
-        fn on_bar(&mut self, s: &Symbol, b: &Bar) -> Vec<OrderRequest> {
-            vec![OrderRequest::new(s.clone(), Side::Buy, dec!(1), b.close, b.close - dec!(1)).unwrap()]
+        fn on_bar(&mut self, s: &Symbol, b: &Bar) -> Vec<Signal> {
+            vec![Signal::Enter(OrderRequest::new(s.clone(), Side::Buy, dec!(1), b.close, b.close - dec!(1)).unwrap())]
         }
     }
 
