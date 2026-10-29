@@ -3,3 +3,4 @@ target/
 /data/
 __pycache__/
 /target-ckpt/
+.venv/
