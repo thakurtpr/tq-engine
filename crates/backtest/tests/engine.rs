@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use tq_backtest::{run, BacktestError, ExitReason, RunReport};
+use tq_backtest::{run, BacktestError, ExitReason, RunConfig, RunReport, Sizing};
 use tq_broker::Paper;
 use tq_core::{Bar, OrderRequest, Side, Symbol, Timestamp};
 use tq_costs::CostSchedule;
@@ -69,8 +69,13 @@ fn round_trip(buy: Decimal, sell: Decimal) -> Decimal {
 
 fn go(s: &mut Scripted, limits: RiskLimits, bars: &[Bar]) -> (RunReport, Paper) {
     let mut paper = Paper::default();
-    let report = run(s, &mut paper, &RiskGate::new(limits), CASH, &x(), bars).unwrap();
+    let report = run(s, &mut paper, &RiskGate::new(limits), &as_signalled(), &x(), bars).unwrap();
     (report, paper)
+}
+
+/// Scenario tests script exact quantities, so they keep the signalled size and pay no slippage.
+fn as_signalled() -> RunConfig {
+    RunConfig { sizing: Sizing::AsSignalled, slippage_bps: dec!(0), ..RunConfig::new(CASH) }
 }
 
 /// Wide limits so scenario tests can hold large positions with distant stops.
@@ -234,7 +239,8 @@ fn zero_gross_edge_loses_money_net_of_costs() {
 fn rejects_non_positive_cash() {
     let mut paper = Paper::default();
     let gate = RiskGate::new(RiskLimits::default());
-    let r = run(&mut Scripted::default(), &mut paper, &gate, dec!(0), &x(), &[flat(0, dec!(1))]);
+    let config = RunConfig { initial_cash: dec!(0), ..as_signalled() };
+    let r = run(&mut Scripted::default(), &mut paper, &gate, &config, &x(), &[flat(0, dec!(1))]);
     assert_eq!(r.err(), Some(BacktestError::NonPositiveCash));
 }
 
@@ -243,6 +249,6 @@ fn rejects_bars_out_of_order() {
     let mut paper = Paper::default();
     let gate = RiskGate::new(RiskLimits::default());
     let bars = [flat(1, dec!(1)), flat(1, dec!(1))];
-    let r = run(&mut Scripted::default(), &mut paper, &gate, CASH, &x(), &bars);
+    let r = run(&mut Scripted::default(), &mut paper, &gate, &as_signalled(), &x(), &bars);
     assert_eq!(r.err(), Some(BacktestError::BarsOutOfOrder));
 }

@@ -19,6 +19,8 @@ pub struct Trade {
     pub symbol: Symbol,
     pub entry_ts: Timestamp,
     pub entry_price: Price,
+    /// Stop at entry; `(entry_price - stop) * qty` is the trade's initial risk (1R).
+    pub stop: Price,
     pub exit_ts: Timestamp,
     pub exit_price: Price,
     pub qty: Qty,
@@ -26,6 +28,23 @@ pub struct Trade {
     pub costs: Decimal,
     pub net_pnl: Decimal,
     pub exit_reason: ExitReason,
+}
+
+impl Trade {
+    /// Net P&L in multiples of the initial risk. `None` if the stop was at the entry price.
+    pub fn r_multiple(&self) -> Option<Decimal> {
+        let risk = (self.entry_price - self.stop) * self.qty;
+        (!risk.is_zero()).then(|| self.net_pnl / risk)
+    }
+
+    /// Net P&L as a percent of the entry notional (zero for a zero notional).
+    pub fn net_return_pct(&self) -> Decimal {
+        let notional = self.entry_price * self.qty;
+        if notional.is_zero() {
+            return Decimal::ZERO;
+        }
+        self.net_pnl / notional * Decimal::ONE_HUNDRED
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -36,6 +55,8 @@ pub struct RunReport {
     pub orders_filled: usize,
     /// `Enter` signals ignored because a position (or pending entry) was already open.
     pub duplicate_entries_ignored: usize,
+    /// Approved entries skipped at the fill because the risk budget bought zero whole shares.
+    pub entries_sized_to_zero: usize,
     pub rejections: Vec<String>,
     /// Bar at which the drawdown limit engaged the kill switch, if it did.
     pub kill_switch_engaged_at: Option<Timestamp>,

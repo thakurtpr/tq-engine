@@ -5,11 +5,12 @@ use std::mem;
 
 use rust_decimal::Decimal;
 use tq_broker::Broker;
-use tq_core::{Bar, Fill, Price, Qty, Symbol, Timestamp};
+use tq_core::{Bar, Fill, OrderRequest, Price, Qty, Side, Symbol, Timestamp};
 use tq_costs::round_paise;
-use tq_risk::{AccountState, ApprovedOrder, RiskGate};
+use tq_risk::{AccountState, ApprovedOrder, RiskGate, RiskViolation};
 use tq_strategy::{Signal, Strategy};
 
+use crate::config::{risk_sized_qty, RunConfig, Sizing};
 use crate::metrics;
 use crate::report::{ExitReason, RunReport, Trade};
 
@@ -29,6 +30,7 @@ pub(crate) struct Engine<'a, S, B> {
     strategy: &'a mut S,
     broker: &'a mut B,
     gate: &'a RiskGate,
+    config: &'a RunConfig,
     symbol: &'a Symbol,
     cash: Decimal,
     positions: HashMap<Symbol, Position>,
@@ -40,11 +42,19 @@ pub(crate) struct Engine<'a, S, B> {
 }
 
 impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
-    pub(crate) fn new(strategy: &'a mut S, broker: &'a mut B, gate: &'a RiskGate, symbol: &'a Symbol, acct: AccountState) -> Self {
+    pub(crate) fn new(
+        strategy: &'a mut S,
+        broker: &'a mut B,
+        gate: &'a RiskGate,
+        config: &'a RunConfig,
+        symbol: &'a Symbol,
+        acct: AccountState,
+    ) -> Self {
         Self {
             strategy,
             broker,
             gate,
+            config,
             symbol,
             cash: acct.equity,
             positions: HashMap::new(),
@@ -57,7 +67,12 @@ impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
     }
 
     /// Processes one bar. `has_next` is false on the last bar, whose signals could never fill.
+    /// Before `trade_from` the strategy sees the bar (indicator warm-up) but its signals are dropped.
     pub(crate) fn step(&mut self, bar: &Bar, has_next: bool) {
+        if bar.ts < self.config.trade_from {
+            self.strategy.on_bar(self.symbol, bar);
+            return;
+        }
         self.fill_pending(bar);
         self.check_stop(bar);
         self.mark_to_market(bar);
@@ -68,10 +83,10 @@ impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
         }
     }
 
-    pub(crate) fn finish(self, initial_cash: Decimal, bars: usize) -> RunReport {
+    pub(crate) fn finish(self) -> RunReport {
         let r = self.report;
-        let metrics = metrics::compute(initial_cash, &r.equity_curve, &r.trades, self.total_costs);
-        RunReport { bars, metrics, ..r }
+        let metrics = metrics::compute(self.config.initial_cash, &r.equity_curve, &r.trades, self.total_costs);
+        RunReport { bars: r.equity_curve.len(), metrics, ..r }
     }
 
     fn queue(&mut self, signal: Signal) {
@@ -81,7 +96,7 @@ impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
         }
     }
 
-    fn queue_entry(&mut self, order: tq_core::OrderRequest) {
+    fn queue_entry(&mut self, order: OrderRequest) {
         self.report.orders_proposed += 1;
         if &order.symbol != self.symbol {
             self.report.rejections.push(format!("entry ignored: {} is not the backtested symbol", order.symbol.0));
@@ -116,15 +131,17 @@ impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
     }
 
     fn open(&mut self, approved: ApprovedOrder, bar: &Bar) {
-        let approved = match self.gate.reprice_at_fill(approved, bar.open, &self.acct) {
-            Ok(a) => a,
+        let price = self.config.slipped(bar.open, Side::Buy);
+        let approved = match self.size_at_fill(approved, price) {
+            Ok(Some(a)) => a,
+            Ok(None) => return self.report.entries_sized_to_zero += 1,
             Err(v) => return self.report.rejections.push(format!("risk at fill: {v}")),
         };
         let (symbol, stop) = (approved.order().symbol.clone(), approved.order().stop);
         if approved.order().notional() > self.cash {
             return self.report.rejections.push(format!("insufficient cash for {}", symbol.0));
         }
-        let fill = match self.broker.submit(approved, bar.ts, bar.open) {
+        let fill = match self.broker.submit(approved, bar.ts, price) {
             Ok(f) => f,
             Err(e) => return self.report.rejections.push(e.to_string()),
         };
@@ -142,8 +159,26 @@ impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
         self.on_fill(&fill);
     }
 
-    fn close(&mut self, symbol: &Symbol, ts: Timestamp, price: Price, reason: ExitReason) {
+    /// Re-checks the entry at the fill price with its final size. `Ok(None)`: the risk budget
+    /// buys no whole share, so the entry is skipped.
+    fn size_at_fill(&self, approved: ApprovedOrder, price: Price) -> Result<Option<ApprovedOrder>, RiskViolation> {
+        let qty = match self.config.sizing {
+            Sizing::AsSignalled => approved.order().qty,
+            Sizing::RiskPct(pct) => {
+                let cap = self.gate.limits().max_position_notional_pct;
+                risk_sized_qty(self.acct.equity, pct, price, approved.order().stop, cap)
+            }
+        };
+        if qty.is_zero() {
+            return Ok(None);
+        }
+        self.gate.resize_at_fill(approved, qty, price, &self.acct).map(Some)
+    }
+
+    /// Closes at `raw_price` less sell-side slippage.
+    fn close(&mut self, symbol: &Symbol, ts: Timestamp, raw_price: Price, reason: ExitReason) {
         let Some(pos) = self.positions.remove(symbol) else { return };
+        let price = self.config.slipped(raw_price, Side::Sell);
         match self.broker.close(symbol, pos.qty, ts, price) {
             Ok(fill) => self.record_trade(pos, &fill, reason),
             Err(e) => {
@@ -163,6 +198,7 @@ impl<'a, S: Strategy, B: Broker> Engine<'a, S, B> {
             symbol: fill.symbol.clone(),
             entry_ts: pos.entry_ts,
             entry_price: pos.avg_entry,
+            stop: pos.stop,
             exit_ts: fill.ts,
             exit_price: fill.price,
             qty: fill.qty,

@@ -110,6 +110,7 @@ mod tests {
             symbol: Symbol("X".into()),
             entry_ts: 0,
             entry_price: dec!(100),
+            stop: dec!(90),
             exit_ts: 1,
             exit_price: dec!(100),
             qty: dec!(1),

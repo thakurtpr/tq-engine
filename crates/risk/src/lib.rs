@@ -4,7 +4,7 @@
 
 use rust_decimal::Decimal;
 use thiserror::Error;
-use tq_core::{OrderRequest, Price, Qty, Side};
+use tq_core::{CoreError, OrderRequest, Price, Qty, Side};
 
 const HUNDRED: Decimal = Decimal::ONE_HUNDRED;
 
@@ -28,6 +28,8 @@ pub enum RiskViolation {
     ShortSelling,
     #[error("fill price is at or through the stop (gap); entry skipped")]
     GapThroughStop,
+    #[error("invalid order at fill: {0}")]
+    InvalidOrder(CoreError),
     #[error("invalid account state: {0}")]
     InvalidAccount(&'static str),
     #[error("risk limits are placeholders; the user must set and confirm them before live trading")]
@@ -164,11 +166,30 @@ impl RiskGate {
         fill_price: Price,
         acct: &AccountState,
     ) -> Result<ApprovedOrder, RiskViolation> {
+        let qty = approved.0.qty;
+        self.resize_at_fill(approved, qty, fill_price, acct)
+    }
+
+    /// Like [`Self::reprice_at_fill`], but also replaces the quantity, e.g. with a size computed
+    /// from the account's risk budget at the fill price. The new size passes the same checks.
+    pub fn resize_at_fill(
+        &self,
+        approved: ApprovedOrder,
+        qty: Qty,
+        fill_price: Price,
+        acct: &AccountState,
+    ) -> Result<ApprovedOrder, RiskViolation> {
         let o = approved.0;
-        let repriced =
-            OrderRequest::new(o.symbol, o.side, o.qty, fill_price, o.stop).map_err(|_| RiskViolation::GapThroughStop)?;
-        self.check_order(&repriced, acct)?;
-        Ok(ApprovedOrder(repriced))
+        let gapped_through_stop = match o.side {
+            Side::Buy => fill_price <= o.stop,
+            Side::Sell => fill_price >= o.stop,
+        };
+        if gapped_through_stop {
+            return Err(RiskViolation::GapThroughStop);
+        }
+        let resized = OrderRequest::new(o.symbol, o.side, qty, fill_price, o.stop).map_err(RiskViolation::InvalidOrder)?;
+        self.check_order(&resized, acct)?;
+        Ok(ApprovedOrder(resized))
     }
 
     /// True once equity has fallen `max_drawdown_pct` from its peak. Engines use this to
@@ -352,6 +373,31 @@ mod tests {
         let approved = gate().check(buy(dec!(10), dec!(1000), dec!(950)), &acct()).unwrap();
         let repriced = gate().reprice_at_fill(approved, dec!(1010), &acct()).unwrap();
         assert_eq!(repriced.order().entry, dec!(1010));
+    }
+
+    #[test]
+    fn resize_replaces_qty_and_price_and_rechecks_limits() {
+        let approved = gate().check(buy(dec!(1), dec!(1000), dec!(950)), &acct()).unwrap();
+        let resized = gate().resize_at_fill(approved, dec!(15), dec!(1005), &acct()).unwrap();
+        assert_eq!((resized.order().qty, resized.order().entry), (dec!(15), dec!(1005)));
+    }
+
+    #[test]
+    fn resize_rejects_qty_that_breaks_notional_cap() {
+        // 25 * 1000 = 25_000 > 20% of 100_000; risk 25 * 10 = 250 is fine.
+        let approved = gate().check(buy(dec!(1), dec!(1000), dec!(990)), &acct()).unwrap();
+        let r = gate().resize_at_fill(approved, dec!(25), dec!(1000), &acct());
+        assert!(matches!(r, Err(RiskViolation::PositionSize { .. })), "{r:?}");
+    }
+
+    #[test]
+    fn resize_rejects_gap_through_stop_and_zero_qty() {
+        let g = gate();
+        let approved = g.check(buy(dec!(1), dec!(1000), dec!(950)), &acct()).unwrap();
+        assert_eq!(g.resize_at_fill(approved, dec!(5), dec!(940), &acct()), Err(RiskViolation::GapThroughStop));
+        let approved = g.check(buy(dec!(1), dec!(1000), dec!(950)), &acct()).unwrap();
+        let r = g.resize_at_fill(approved, dec!(0), dec!(1000), &acct());
+        assert!(matches!(r, Err(RiskViolation::InvalidOrder(_))), "{r:?}");
     }
 
     #[test]
