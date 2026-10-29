@@ -1,109 +1,51 @@
-//! Event-driven backtester (skeleton). Next: full Indian cost model (brokerage, STT, stamp,
-//! exchange, SEBI, GST), slippage, mark-to-market equity, walk-forward and Monte Carlo.
+//! Event-driven backtester over daily bars, long-only.
+//!
+//! Per bar, in order: (1) fill pending exits, then pending entries, at the open;
+//! (2) check stops against the low; (3) mark to market at the close and update the live
+//! `AccountState` (engaging the kill switch on max drawdown); (4) ask the strategy for signals,
+//! which fill at the NEXT bar's open, so a strategy never trades on the bar it just saw.
+//! Entries pass the risk gate twice (at signal time and at the fill price); exits never do.
+//! Next: slippage, walk-forward and Monte Carlo.
 
+mod engine;
+pub mod metrics;
+mod report;
+
+use rust_decimal::Decimal;
+use thiserror::Error;
 use tq_broker::Broker;
 use tq_core::{Bar, Symbol};
 use tq_risk::{AccountState, RiskGate};
-use tq_strategy::{Signal, Strategy};
+use tq_strategy::Strategy;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RunReport {
-    pub bars: usize,
-    pub orders_proposed: usize,
-    pub orders_filled: usize,
-    pub rejections: Vec<String>,
+use crate::engine::Engine;
+pub use crate::metrics::Metrics;
+pub use crate::report::{ExitReason, RunReport, Trade};
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum BacktestError {
+    #[error("initial cash must be positive")]
+    NonPositiveCash,
+    #[error("bars must be in strictly increasing timestamp order")]
+    BarsOutOfOrder,
 }
 
-/// Runs `strategy` over `bars`. Orders proposed on bar N fill at bar N+1's open,
-/// so a strategy can never trade on the bar it just saw (no look-ahead).
+/// Runs `strategy` over `bars` of one `symbol`, starting with `initial_cash` and no positions.
 pub fn run<S: Strategy, B: Broker>(
     strategy: &mut S,
     broker: &mut B,
     gate: &RiskGate,
-    acct: &AccountState,
+    initial_cash: Decimal,
     symbol: &Symbol,
     bars: &[Bar],
-) -> RunReport {
-    let mut report = RunReport { bars: bars.len(), ..Default::default() };
-    for (bar, next) in bars.iter().zip(bars.iter().skip(1)) {
-        for signal in strategy.on_bar(symbol, bar) {
-            // TODO(backtest engineer): handle Signal::Exit and track positions.
-            let Signal::Enter(order) = signal else { continue };
-            report.orders_proposed += 1;
-            let approved = match gate.check(order, acct) {
-                Ok(a) => a,
-                Err(v) => {
-                    report.rejections.push(format!("risk: {v}"));
-                    continue;
-                }
-            };
-            match broker.submit(approved, next.ts, next.open) {
-                Ok(fill) => {
-                    strategy.on_fill(&fill);
-                    report.orders_filled += 1;
-                }
-                Err(e) => report.rejections.push(e.to_string()),
-            }
-        }
+) -> Result<RunReport, BacktestError> {
+    if bars.windows(2).any(|w| w[0].ts >= w[1].ts) {
+        return Err(BacktestError::BarsOutOfOrder);
     }
-    report
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rust_decimal::Decimal;
-    use rust_decimal_macros::dec;
-    use tq_broker::Paper;
-    use tq_core::{OrderRequest, Side};
-    use tq_risk::RiskLimits;
-
-    struct BuyEveryBar;
-
-    impl Strategy for BuyEveryBar {
-        fn name(&self) -> &str {
-            "buy-every-bar"
-        }
-        fn on_bar(&mut self, s: &Symbol, b: &Bar) -> Vec<Signal> {
-            vec![Signal::Enter(OrderRequest::new(s.clone(), Side::Buy, dec!(1), b.close, b.close - dec!(1)).unwrap())]
-        }
+    let acct = AccountState::fresh(initial_cash).map_err(|_| BacktestError::NonPositiveCash)?;
+    let mut engine = Engine::new(strategy, broker, gate, symbol, acct);
+    for (i, bar) in bars.iter().enumerate() {
+        engine.step(bar, i + 1 < bars.len());
     }
-
-    fn acct() -> AccountState {
-        AccountState {
-            equity: dec!(100000),
-            start_of_day_equity: dec!(100000),
-            peak_equity: dec!(100000),
-            open_positions: 0,
-            kill_switch: false,
-        }
-    }
-
-    fn bars() -> Vec<Bar> {
-        (0..3)
-            .map(|i| Bar::new(i, dec!(100) + Decimal::from(i), dec!(110), dec!(90), dec!(100), dec!(1)).unwrap())
-            .collect()
-    }
-
-    fn gate() -> RiskGate {
-        RiskGate::new(RiskLimits::default())
-    }
-
-    #[test]
-    fn fills_at_next_bar_open_never_same_bar() {
-        let (mut s, mut p) = (BuyEveryBar, Paper::default());
-        let r = run(&mut s, &mut p, &gate(), &acct(), &Symbol("X".into()), &bars());
-        assert_eq!(r.orders_filled, 2);
-        assert_eq!(p.fills()[0].price, dec!(101));
-        assert_eq!(p.fills()[0].ts, 1);
-    }
-
-    #[test]
-    fn kill_switch_blocks_every_order() {
-        let (mut s, mut p) = (BuyEveryBar, Paper::default());
-        let a = AccountState { kill_switch: true, ..acct() };
-        let r = run(&mut s, &mut p, &gate(), &a, &Symbol("X".into()), &bars());
-        assert_eq!(r.orders_filled, 0);
-        assert_eq!(r.rejections.len(), 2);
-    }
+    Ok(engine.finish(initial_cash, bars.len()))
 }

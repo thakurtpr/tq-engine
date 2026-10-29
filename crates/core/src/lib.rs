@@ -76,6 +76,10 @@ impl OrderRequest {
         if qty <= Decimal::ZERO {
             return Err(CoreError::InvalidOrder("qty must be positive"));
         }
+        if !qty.fract().is_zero() {
+            return Err(CoreError::InvalidOrder("qty must be a whole number of shares"));
+        }
+        // TODO: round entry/stop to the NSE tick size (0.05) once instrument metadata exists.
         if entry <= Decimal::ZERO || stop <= Decimal::ZERO {
             return Err(CoreError::InvalidOrder("prices must be positive"));
         }
@@ -157,6 +161,12 @@ mod tests {
     #[test]
     fn sell_order_requires_stop_above_entry() {
         assert!(OrderRequest::new(sym(), Side::Sell, dec!(10), dec!(100), dec!(99)).is_err());
+    }
+
+    #[test]
+    fn order_rejects_fractional_qty() {
+        let r = OrderRequest::new(sym(), Side::Buy, dec!(1.5), dec!(100), dec!(95));
+        assert_eq!(r, Err(CoreError::InvalidOrder("qty must be a whole number of shares")));
     }
 
     #[test]

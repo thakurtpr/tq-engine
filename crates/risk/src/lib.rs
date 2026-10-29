@@ -4,7 +4,7 @@
 
 use rust_decimal::Decimal;
 use thiserror::Error;
-use tq_core::OrderRequest;
+use tq_core::{OrderRequest, Price, Qty, Side};
 
 const HUNDRED: Decimal = Decimal::ONE_HUNDRED;
 
@@ -24,6 +24,12 @@ pub enum RiskViolation {
     PositionSize { actual: Decimal, limit: Decimal },
     #[error("account equity must be positive")]
     NoEquity,
+    #[error("short selling is not allowed: entries must be buys (long-only, no leverage)")]
+    ShortSelling,
+    #[error("fill price is at or through the stop (gap); entry skipped")]
+    GapThroughStop,
+    #[error("invalid account state: {0}")]
+    InvalidAccount(&'static str),
     #[error("risk limits are placeholders; the user must set and confirm them before live trading")]
     LimitsNotConfirmed,
 }
@@ -73,8 +79,46 @@ pub struct AccountState {
     pub kill_switch: bool,
 }
 
+impl AccountState {
+    /// Validated constructor: equity and start-of-day equity positive, peak at least equity.
+    /// Starts with no open positions and the kill switch off.
+    pub fn new(equity: Decimal, start_of_day_equity: Decimal, peak_equity: Decimal) -> Result<Self, RiskViolation> {
+        if equity <= Decimal::ZERO {
+            return Err(RiskViolation::InvalidAccount("equity must be positive"));
+        }
+        if start_of_day_equity <= Decimal::ZERO {
+            return Err(RiskViolation::InvalidAccount("start-of-day equity must be positive"));
+        }
+        if peak_equity < equity {
+            return Err(RiskViolation::InvalidAccount("peak equity below equity"));
+        }
+        Ok(Self { equity, start_of_day_equity, peak_equity, open_positions: 0, kill_switch: false })
+    }
+
+    /// A flat account where equity is also the day's start and the peak.
+    pub fn fresh(equity: Decimal) -> Result<Self, RiskViolation> {
+        Self::new(equity, equity, equity)
+    }
+}
+
+/// Whole shares (rounded down) such that hitting `stop` loses at most `risk_pct`% of `equity`.
+/// Returns zero for non-positive equity or risk, or when entry equals stop.
+pub fn size_for_risk(equity: Decimal, risk_pct: Decimal, entry: Price, stop: Price) -> Qty {
+    let per_share = (entry - stop).abs();
+    if equity <= Decimal::ZERO || risk_pct <= Decimal::ZERO || per_share.is_zero() {
+        return Decimal::ZERO;
+    }
+    (equity * risk_pct / HUNDRED / per_share).floor()
+}
+
 /// An order that passed the gate. The field is private so only `RiskGate` can create one.
-#[derive(Debug, Clone, PartialEq)]
+/// It is deliberately not `Clone`: brokers consume it, so one approval fills at most once.
+///
+/// ```compile_fail
+/// fn needs_clone<T: Clone>() {}
+/// needs_clone::<tq_risk::ApprovedOrder>();
+/// ```
+#[derive(Debug, PartialEq)]
 pub struct ApprovedOrder(OrderRequest);
 
 impl ApprovedOrder {
@@ -101,6 +145,9 @@ impl RiskGate {
         if acct.kill_switch {
             return Err(RiskViolation::KillSwitch);
         }
+        if order.side == Side::Sell {
+            return Err(RiskViolation::ShortSelling);
+        }
         if acct.equity <= Decimal::ZERO {
             return Err(RiskViolation::NoEquity);
         }
@@ -109,14 +156,35 @@ impl RiskGate {
         Ok(ApprovedOrder(order))
     }
 
+    /// Re-checks an approved order at the price it will actually fill at (e.g. the next open).
+    /// Rejects fills at or through the stop and re-applies the per-order risk and size limits.
+    pub fn reprice_at_fill(
+        &self,
+        approved: ApprovedOrder,
+        fill_price: Price,
+        acct: &AccountState,
+    ) -> Result<ApprovedOrder, RiskViolation> {
+        let o = approved.0;
+        let repriced =
+            OrderRequest::new(o.symbol, o.side, o.qty, fill_price, o.stop).map_err(|_| RiskViolation::GapThroughStop)?;
+        self.check_order(&repriced, acct)?;
+        Ok(ApprovedOrder(repriced))
+    }
+
+    /// True once equity has fallen `max_drawdown_pct` from its peak. Engines use this to
+    /// engage the kill switch automatically.
+    pub fn drawdown_breached(&self, acct: &AccountState) -> bool {
+        let drawdown = acct.peak_equity - acct.equity;
+        drawdown >= acct.peak_equity * self.limits.max_drawdown_pct / HUNDRED
+    }
+
     fn check_account(&self, acct: &AccountState) -> Result<(), RiskViolation> {
         let l = &self.limits;
         let day_loss = acct.start_of_day_equity - acct.equity;
         if day_loss >= acct.start_of_day_equity * l.max_daily_loss_pct / HUNDRED {
             return Err(RiskViolation::DailyLoss);
         }
-        let drawdown = acct.peak_equity - acct.equity;
-        if drawdown >= acct.peak_equity * l.max_drawdown_pct / HUNDRED {
+        if self.drawdown_breached(acct) {
             return Err(RiskViolation::Drawdown);
         }
         if acct.open_positions >= l.max_open_positions {
@@ -218,6 +286,72 @@ mod tests {
     fn rejects_when_equity_not_positive() {
         let a = AccountState { equity: dec!(0), ..acct() };
         assert_eq!(gate().check(buy(dec!(1), dec!(100), dec!(99)), &a), Err(RiskViolation::NoEquity));
+    }
+
+    #[test]
+    fn size_for_risk_rounds_down_to_whole_shares() {
+        // 1% of 100_000 = 1000 risk; stop distance 30 -> 33.33 -> 33 shares
+        assert_eq!(size_for_risk(dec!(100000), dec!(1), dec!(1000), dec!(970)), dec!(33));
+    }
+
+    #[test]
+    fn size_for_risk_is_zero_for_degenerate_inputs() {
+        assert_eq!(size_for_risk(dec!(100000), dec!(1), dec!(100), dec!(100)), dec!(0));
+        assert_eq!(size_for_risk(dec!(0), dec!(1), dec!(100), dec!(95)), dec!(0));
+        assert_eq!(size_for_risk(dec!(100000), dec!(-1), dec!(100), dec!(95)), dec!(0));
+    }
+
+    #[test]
+    fn size_for_risk_handles_short_side_stop() {
+        assert_eq!(size_for_risk(dec!(10000), dec!(1), dec!(100), dec!(102)), dec!(50));
+    }
+
+    #[test]
+    fn drawdown_breach_detected_at_limit() {
+        let g = gate();
+        assert!(g.drawdown_breached(&AccountState { equity: dec!(95000), ..acct() }));
+        assert!(!g.drawdown_breached(&AccountState { equity: dec!(95001), ..acct() }));
+    }
+
+    #[test]
+    fn fresh_account_starts_flat_at_its_equity() {
+        assert_eq!(AccountState::fresh(dec!(100000)), Ok(acct()));
+    }
+
+    #[test]
+    fn account_new_validates_invariants() {
+        let bad = |e, sod, peak| AccountState::new(e, sod, peak).is_err();
+        assert!(bad(dec!(0), dec!(100), dec!(100)));
+        assert!(bad(dec!(100), dec!(0), dec!(100)));
+        assert!(bad(dec!(100), dec!(100), dec!(99)));
+        assert!(AccountState::new(dec!(90), dec!(95), dec!(100)).is_ok());
+    }
+
+    #[test]
+    fn rejects_sell_entries_long_only() {
+        let o = OrderRequest::new(Symbol("NSE:TCS".into()), Side::Sell, dec!(1), dec!(100), dec!(101)).unwrap();
+        assert_eq!(gate().check(o, &acct()), Err(RiskViolation::ShortSelling));
+    }
+
+    #[test]
+    fn reprice_rejects_fill_at_or_below_stop() {
+        let approved = gate().check(buy(dec!(10), dec!(1000), dec!(950)), &acct()).unwrap();
+        assert_eq!(gate().reprice_at_fill(approved, dec!(950), &acct()), Err(RiskViolation::GapThroughStop));
+    }
+
+    #[test]
+    fn reprice_rechecks_risk_at_actual_fill_price() {
+        // risk at close 10 * 50 = 500 ok; gap up to 1200 -> 10 * 250 = 2500 > 1000
+        let approved = gate().check(buy(dec!(10), dec!(1000), dec!(950)), &acct()).unwrap();
+        let r = gate().reprice_at_fill(approved, dec!(1200), &acct());
+        assert_eq!(r, Err(RiskViolation::TradeRisk { actual: dec!(2500), limit: dec!(1000) }));
+    }
+
+    #[test]
+    fn reprice_keeps_order_within_limits_at_fill_price() {
+        let approved = gate().check(buy(dec!(10), dec!(1000), dec!(950)), &acct()).unwrap();
+        let repriced = gate().reprice_at_fill(approved, dec!(1010), &acct()).unwrap();
+        assert_eq!(repriced.order().entry, dec!(1010));
     }
 
     #[test]
