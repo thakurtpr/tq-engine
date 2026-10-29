@@ -1,3 +1,5 @@
 date,strategy_id,params,per_period_sharpe,result
 2026-10-30,trend-pullback,"defaults: sma200 ema20/50 rsi2<10 atr14 stop2atr maxhold10; risk0.5% slip5bps; current NIFTY50 (survivor) 2012-2021",0.0050,FAIL (backtest-01: mean net trade 0.06%; t 0.93; PF 1.03)
 2026-10-30,donchian-breakout,"defaults: entry55 exit20 atr20 stop2atr; risk0.5% slip5bps; current NIFTY50 (survivor) 2012-2021",0.0101,FAIL (backtest-01: per-symbol Sharpe 0.16; top symbol 22% of P&L; survivor universe)
+2026-10-30,trend-pullback,"same defaults as row 1; point-in-time NIFTY50 (data-ref, 95.4% member-days covered), entries only while a member, 2012-2021",-0.0019,FAIL (backtest-02: mean net trade 0.02%; t 0.33; PF 1.00; net P&L < 0)
+2026-10-30,donchian-breakout,"same defaults as row 2; point-in-time NIFTY50 (data-ref, 95.4% member-days covered), entries only while a member, 2012-2021",0.0032,FAIL (backtest-02: t 2.41 < 3; per-symbol Sharpe 0.05; mean net trade 1.05%; PF 1.32)

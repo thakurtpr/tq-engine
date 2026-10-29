@@ -1,0 +1,7 @@
+symbol,price_symbol,note
+SESAGOA,VEDL,"Sesa Goa -> Sesa Sterlite -> Vedanta: same listed company (data-ref/nifty50_symbol_notes.csv). Whether Yahoo's VEDL history before 2013 is Sesa Goa's prices is UNVERIFIED"
+SESASTERLITE,VEDL,same company as SESAGOA and VEDL
+TATAMOTORS,TMPV,"Yahoo serves the pre-demerger Tata Motors history under TMPV (TATAMOTORS.NS returns no rows)"
+INFRATEL,INDUSTOWER,"Bharti Infratel was renamed Indus Towers after the 2020 merger; same listing. Yahoo history starts 2012-12"
+IBULHSGFIN,SAMMAANCAP,"Indiabulls Housing Finance renamed Sammaan Capital; same listing"
+MCDOWELL-N,UNITDSPR,"United Spirits; NSE symbol changed to UNITDSPR"
