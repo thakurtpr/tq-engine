@@ -2,3 +2,4 @@ target/
 # Downloaded market data (scripts/fetch_daily.py). Anchored so crates/data is not ignored.
 /data/
 __pycache__/
+/target-ckpt/

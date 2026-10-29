@@ -31,9 +31,8 @@ extra Rs 20/order for debit-balance accounts, payment gateway Rs 9 + GST (not fo
 - Compute everything in exact decimals; round **only the final per-charge display amounts and the total
   to 2 decimals**. Total = unrounded sum, then rounded. In examples 1-3 this equals the sum of the
   rounded lines; example 4 has a half-paisa case (see below).
-- Rounding mode for the half-paisa case: half-up (2.525 -> 2.53) is the common convention;
-  Python's `Decimal.quantize` default is half-even and gives 2.52. Zerodha's own calculator may round
-  STT to whole rupees; **unverified**, so the fixtures keep STT unrounded. Decide one rule and test it.
+- STT rounding: see "STT rounding (researched 2026-10-30)" below. Fixtures here keep STT unrounded;
+  the rounded variants are listed there.
 - Intraday brokerage cap is applied **per order**: buy and sell are separate orders.
 
 ## Worked examples (buy and sell 100 shares, Rs 1000 -> Rs 1010; gross P&L Rs 1,000.00)
@@ -89,7 +88,7 @@ Buy 10,000; sell 10,100; total 20,100; gross P&L Rs 100.00.
 | Charge | Exact | Rs |
 | --- | --- | --- |
 | Brokerage | 0.03% x 10,000 + 0.03% x 10,100 = 3.00 + 3.03 | 6.03 |
-| STT | 0.025% x 10,100 = 2.525 (half-paisa: 2.52 half-even, 2.53 half-up) | 2.52 / 2.53 |
+| STT | 0.025% x 10,100 = 2.525 unrounded (Rs 3 if rounded to whole rupees, see STT rounding) | 2.53 (display only) |
 | Exchange txn (NSE) | 0.617070 | 0.62 |
 | SEBI | 0.0201 | 0.02 |
 | GST | 18% x (6.03 + 0.0201 + 0.61707) = 1.2000906 | 1.20 |
@@ -98,6 +97,37 @@ Buy 10,000; sell 10,100; total 20,100; gross P&L Rs 100.00.
 | **Net P&L** | 100 - 10.6922606 | **89.31** |
 
 Total and Net use the unrounded sum, so they do not depend on the half-paisa STT rounding.
+
+## STT rounding (researched 2026-10-30)
+
+**Rule: STT is rounded to the nearest whole rupee, 50 paise or more rounds UP (half-up), less than 50
+paise rounds down.** Not half-even.
+- Zerodha support, "How is the Securities Transaction Tax (STT) calculated?":
+  <https://support.zerodha.com/category/trading-and-markets/trading-faqs/articles/how-is-the-securities-transaction-tax-stt-calculated>
+  (fetched; says Rs 100.60 -> 101, Rs 100.40 -> 100, and gives an intraday-sell example of Rs 12.81 -> 13).
+- Statute (secondary, from a search summary; the incometaxindia.gov.in page returned 403 so I did not
+  read the text): Securities Transaction Tax Rules, 2004, Rule 4 rounds the value of the transaction and
+  the STT payable to the nearest rupee, 50 paise or more rounded up.
+- Upstox's help page shows a separate "STT-RND" contract-note line for the rounding difference
+  (search snippet, not fetched), which suggests rounding is applied to a total on the contract note.
+
+**Still unresolved:** the *unit* rounding is applied to (per order, per exchange trade, or per
+contract-note day total, across buys and sells). Zerodha's page rounds each calculated amount in its
+examples but does not say. I did not get a real Zerodha contract note. For a one-order-per-side trade
+the choices coincide; they differ only when a day has several fills in the same scrip. Treat this as a
+bounded error of under Rs 1 per day per scrip.
+
+Fixtures if the engine rounds STT per side to whole rupees (half-up), everything else unchanged:
+
+| Example | STT unrounded | STT rounded | Total | Net P&L |
+| --- | --- | --- | --- | --- |
+| 1. NSE delivery | 201.00 | 201 | 238.86 | 761.14 |
+| 2. NSE intraday | 25.25 | 25 | **82.72** | **917.28** |
+| 3. BSE delivery | 201.00 | 201 | 240.47 | 759.53 |
+| 4. NSE intraday, 10 sh | 2.525 | **3** | **11.17** | **88.83** |
+
+(Delivery STT in the examples is already whole rupees per side: 100 + 101.) Recommended: round STT
+half-up to whole rupees per order, round every other component unrounded, round the trade total once.
 
 ## Takeaway for the backtester
 
