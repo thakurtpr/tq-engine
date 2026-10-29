@@ -4,9 +4,22 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "tq"
+path = "src/main.rs"
+
 [dependencies]
 tq-core.workspace = true
 tq-risk.workspace = true
+tq-backtest.workspace = true
+tq-broker.workspace = true
+tq-data.workspace = true
+tq-strategy.workspace = true
+tq-strategies.workspace = true
+rust_decimal.workspace = true
+thiserror.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+chrono = { version = "0.4.38", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 rust_decimal_macros.workspace = true
