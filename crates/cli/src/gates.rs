@@ -64,7 +64,7 @@ fn d2(x: Option<Decimal>) -> String {
 }
 
 /// Gates for a portfolio run. `bench` is the price-index benchmark, if one was given.
-pub fn portfolio_rows(t: &TradeStats, r: &ReturnStats, g: &GateT, bench: Option<&ReturnStats>) -> Vec<Gate> {
+pub fn portfolio_rows(t: &TradeStats, r: &ReturnStats, g: &GateT, bench: Option<(&str, &ReturnStats)>) -> Vec<Gate> {
     let share = t.top_symbol_share.as_ref();
     let mut rows = vec![
         gate("3a", "Closed trades", ">= 200", t.trades.to_string(), Some(t.trades >= 200)),
@@ -85,16 +85,17 @@ fn gate_value(g: &GateT) -> String {
     format!("{} (HAC {}, L = {}; monthly {}; per-trade {})", f2(g.gate), f2(g.hac), g.lag, f2(g.monthly), f2(g.per_trade_clustered))
 }
 
-/// 4f: strategy Sharpe AND Calmar above buy-and-hold. Against the price index this is
+/// 4f: strategy Sharpe AND Calmar above buy-and-hold. Against the price index (NSEI) this is
 /// necessary, not sufficient (the TRI is higher by the dividend yield).
-fn benchmark_gate(r: &ReturnStats, bench: Option<&ReturnStats>) -> Gate {
-    let Some(b) = bench else {
+fn benchmark_gate(r: &ReturnStats, bench: Option<(&str, &ReturnStats)>) -> Gate {
+    let Some((name, b)) = bench else {
         return Gate { id: "4f", name: "Beats NIFTY 50 (Sharpe and Calmar)", threshold: "both higher", value: "no benchmark given".into(), verdict: Verdict::NotMeasured };
     };
-    let value = format!("Sharpe {} vs {}; Calmar {} vs {} (price index)", f2(r.sharpe), f2(b.sharpe), f2(r.calmar), f2(b.calmar));
+    let value = format!("Sharpe {} vs {}; Calmar {} vs {} ({name})", f2(r.sharpe), f2(b.sharpe), f2(r.calmar), f2(b.calmar));
     let beats = |a: Option<f64>, b: Option<f64>| a.zip(b).map(|(a, b)| a > b);
     let pass = beats(r.sharpe, b.sharpe).zip(beats(r.calmar, b.calmar)).map(|(s, c)| s && c);
-    gate("4f", "Beats NIFTY 50 price index (Sharpe and Calmar)", "both higher; necessary only", value, pass)
+    let threshold = if name == "NSEI" { "both higher; necessary only (price index)" } else { "both higher" };
+    gate("4f", "Beats buy-and-hold of the benchmark (Sharpe and Calmar)", threshold, value, pass)
 }
 
 #[cfg(test)]
@@ -120,7 +121,7 @@ mod tests {
     #[test]
     fn benchmark_gate_needs_both_sharpe_and_calmar() {
         let bench = returns(0.6, 0.4, 1.0);
-        assert_eq!(benchmark_gate(&returns(0.7, 0.3, 0.0), Some(&bench)).verdict, Verdict::Fail);
-        assert_eq!(benchmark_gate(&returns(0.7, 0.5, 0.0), Some(&bench)).verdict, Verdict::Pass);
+        assert_eq!(benchmark_gate(&returns(0.7, 0.3, 0.0), Some(("NSEI", &bench))).verdict, Verdict::Fail);
+        assert_eq!(benchmark_gate(&returns(0.7, 0.5, 0.0), Some(("NIFTYBEES", &bench))).verdict, Verdict::Pass);
     }
 }

@@ -35,7 +35,11 @@ pub fn write_header(out: &mut String, args: &BacktestArgs, setup: &Setup, manife
     };
     writeln!(out, "# Backtest: {:?} ({mode})\n", args.strategy)?;
     writeln!(out, "- Window: {} to {} (earlier bars warm up indicators only)", args.start, args.end)?;
-    writeln!(out, "- Starting cash: Rs {}; risk per trade {}% of equity", args.cash, args.risk_pct)?;
+    if args.strategy.is_rebalancer() {
+        writeln!(out, "- Starting cash: Rs {}; sized by month-end target weights (no stops; --risk-pct unused), 0.5% cash buffer, trims under 0.5% of equity skipped", args.cash)?;
+    } else {
+        writeln!(out, "- Starting cash: Rs {}; risk per trade {}% of equity", args.cash, args.risk_pct)?;
+    }
     let model = match args.slippage_model {
         SlippageArg::Adopted if args.price_basis == PriceBasis::Unadjusted => "adopted model (docs/slippage-model.md: sqrt impact > 0.05% ADV, 2x stop exits, 1% ADV entry cap, Rs 0.05 ticks)",
         SlippageArg::Adopted => "adopted model (docs/slippage-model.md: sqrt impact > 0.05% ADV, 2x stop exits, 1% ADV entry cap); no tick rounding on adjusted prices",
@@ -47,6 +51,9 @@ pub fn write_header(out: &mut String, args: &BacktestArgs, setup: &Setup, manife
         "- Risk gate: max risk {}%, notional cap {}%, max open positions {}, daily loss {}%, drawdown kill switch {}%",
         l.max_risk_per_trade_pct, l.max_position_notional_pct, l.max_open_positions, l.max_daily_loss_pct, l.max_drawdown_pct
     )?;
+    if let Some(m) = setup.config.slippage_model.as_ref().filter(|m| m.adv_cap_pct != Decimal::ONE) {
+        writeln!(out, "- **ADV cap changed for a sensitivity run: entries cut at {}% of 20-day ADV (adopted: 1%)**", m.adv_cap_pct)?;
+    }
     writeln!(out, "- Entry priority when slots or cash run out: {:?}", setup.config.priority)?;
     writeln!(out, "- Strategy parameters: defaults (not tuned)")?;
     writeln!(out, "- Data manifest: {manifest}\n")

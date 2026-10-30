@@ -4,13 +4,13 @@ use std::collections::BTreeSet;
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use tq_backtest::{run, run_portfolio, Priority, RunConfig, RunReport, Series, SlippageModel, Sizing};
+use tq_backtest::{run, run_portfolio, run_rebalance, Priority, RunConfig, RunReport, Series, SlippageModel, Sizing};
 use tq_broker::Paper;
 use tq_core::{Bar, Symbol, Timestamp};
 use tq_data::{ist_close_ts, ist_date, BarSource, CsvDaily};
 use tq_risk::{RiskGate, RiskLimits};
-use tq_strategies::{DonchianBreakout, TrendPullback};
-use tq_strategy::Strategy;
+use tq_strategies::{BuyAndHold, DonchianBreakout, IndexTrendFilter, IndexTrendFilterConfig, MomentumRotation, TrendPullback};
+use tq_strategy::{Rebalancer, Strategy};
 
 use crate::args::{BacktestArgs, PriceBasis, PriorityArg, SlippageArg, StrategyName};
 use crate::stats::SymbolResult;
@@ -34,9 +34,10 @@ impl Setup {
         let limits = RiskLimits {
             max_drawdown_pct: args.max_drawdown_pct.unwrap_or(defaults.max_drawdown_pct),
             max_open_positions: args.max_positions.unwrap_or(defaults.max_open_positions),
+            max_position_notional_pct: args.max_notional_pct.unwrap_or(defaults.max_position_notional_pct),
             ..defaults
         };
-        if args.risk_pct <= Decimal::ZERO || args.risk_pct > limits.max_risk_per_trade_pct {
+        if !args.strategy.is_rebalancer() && (args.risk_pct <= Decimal::ZERO || args.risk_pct > limits.max_risk_per_trade_pct) {
             let max = limits.max_risk_per_trade_pct;
             return Err(CliError::Usage(format!("--risk-pct must be in (0, {max}] (the gate's per-trade limit)")));
         }
@@ -44,7 +45,7 @@ impl Setup {
             initial_cash: args.cash,
             sizing: Sizing::RiskPct(args.risk_pct),
             slippage_bps: args.slippage_bps,
-            slippage_model: (args.slippage_model == SlippageArg::Adopted).then(|| slippage_model(args.price_basis)),
+            slippage_model: (args.slippage_model == SlippageArg::Adopted).then(|| SlippageModel { adv_cap_pct: args.adv_cap_pct, ..slippage_model(args.price_basis) }),
             slippage_mult: args.slippage_mult,
             priority: match (args.priority, args.seed) {
                 (PriorityArg::Random, Some(seed)) => Priority::Random { seed },
@@ -83,8 +84,22 @@ impl Setup {
         let report = match self.strategy {
             StrategyName::TrendPullback => self.portfolio_with(TrendPullback::new(Default::default()), &series),
             StrategyName::Donchian => self.portfolio_with(DonchianBreakout::new(Default::default()), &series),
+            StrategyName::MomentumRotation => self.rebalance_with(MomentumRotation::new(Default::default()), &series),
+            StrategyName::IndexTrendFilter => {
+                let fund = single_fund(&series)?;
+                self.rebalance_with(IndexTrendFilter::new(IndexTrendFilterConfig::faber(fund)), &series)
+            }
+            StrategyName::BuyHold => {
+                let fund = single_fund(&series)?;
+                self.rebalance_with(Ok::<_, CliError>(BuyAndHold::new(fund)), &series)
+            }
         }?;
         Ok((report, skipped))
+    }
+
+    fn rebalance_with<R: Rebalancer, E: std::fmt::Display>(&self, strategy: Result<R, E>, series: &[Series]) -> Result<RunReport, CliError> {
+        let mut strategy = strategy.map_err(|e| CliError::Usage(e.to_string()))?;
+        run_rebalance(&mut strategy, &mut Paper::default(), &self.gate, &self.config, series).map_err(|e| CliError::Usage(e.to_string()))
     }
 
     fn portfolio_with<S: Strategy, E: std::fmt::Display>(&self, strategy: Result<S, E>, series: &[Series]) -> Result<RunReport, CliError> {
@@ -111,6 +126,7 @@ impl Setup {
                 let s = DonchianBreakout::new(Default::default()).map_err(|e| e.to_string())?;
                 run_with(s, &self.gate, &config, &symbol, &bars)
             }
+            _ => Err("rebalancing strategies run in portfolio mode only".into()),
         }
     }
 
@@ -122,6 +138,14 @@ impl Setup {
             return Err("no bars inside the test window".into());
         }
         Ok(bars)
+    }
+}
+
+/// The one fund an index strategy holds: exactly one series with data.
+fn single_fund(series: &[Series]) -> Result<tq_core::Symbol, CliError> {
+    match series {
+        [one] => Ok(one.symbol.clone()),
+        _ => Err(CliError::Usage(format!("index strategies hold one fund; got {} series with data", series.len()))),
     }
 }
 

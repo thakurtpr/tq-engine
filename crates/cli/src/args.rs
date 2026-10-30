@@ -43,6 +43,19 @@ pub struct QualityArgs {
 pub enum StrategyName {
     TrendPullback,
     Donchian,
+    /// Rebalancer: 12-1 momentum, top 10 of the point-in-time members, monthly (pre-registered).
+    MomentumRotation,
+    /// Rebalancer: hold the one --symbols fund above its 10-month SMA, else cash (Faber 2007).
+    IndexTrendFilter,
+    /// Rebalancer: hold the one --symbols fund throughout (the benchmark).
+    BuyHold,
+}
+
+impl StrategyName {
+    /// True for the month-end target-weight strategies (`run_rebalance`).
+    pub fn is_rebalancer(self) -> bool {
+        matches!(self, Self::MomentumRotation | Self::IndexTrendFilter | Self::BuyHold)
+    }
 }
 
 /// How the symbols share capital.
@@ -114,12 +127,20 @@ pub struct BacktestArgs {
     pub slippage_bps: Decimal,
     #[arg(long, value_enum, default_value = "adopted")]
     pub slippage_model: SlippageArg,
+    /// Entry cap as a percent of 20-day ADV under the adopted model (docs/slippage-model.md: 1).
+    /// A sensitivity knob only: the impact term still prices every order above 0.05% of ADV.
+    #[arg(long, default_value = "1")]
+    pub adv_cap_pct: Decimal,
     /// Adjusted prices skip the Rs 0.05 tick rounding (review-backtest-03, section 3).
     #[arg(long, value_enum, default_value = "adjusted")]
     pub price_basis: PriceBasis,
     /// Stress multiplier on all slippage (protocol cost stress: 1, 2, 3).
     #[arg(long, default_value = "1")]
     pub slippage_mult: Decimal,
+    /// Override the risk gate's per-position notional cap (percent of equity), e.g. 100 for one
+    /// diversified index fund. Default: the gate's 20%.
+    #[arg(long)]
+    pub max_notional_pct: Option<Decimal>,
     /// Override the risk gate's max open positions (portfolio mode: across all symbols).
     #[arg(long)]
     pub max_positions: Option<usize>,
@@ -159,6 +180,15 @@ pub fn check_holdout(args: &BacktestArgs) -> Result<(), CliError> {
     }
     if args.slippage_mult <= Decimal::ZERO {
         return Err(CliError::Usage("--slippage-mult must be positive".into()));
+    }
+    if args.strategy.is_rebalancer() && args.mode == Mode::PerSymbol {
+        return Err(CliError::Usage("rebalancing strategies run in --mode portfolio only".into()));
+    }
+    if args.adv_cap_pct <= Decimal::ZERO {
+        return Err(CliError::Usage("--adv-cap-pct must be positive".into()));
+    }
+    if args.max_notional_pct.is_some_and(|p| p <= Decimal::ZERO || p > Decimal::ONE_HUNDRED) {
+        return Err(CliError::Usage("--max-notional-pct must be in (0, 100] (no leverage)".into()));
     }
     if args.start > args.end {
         return Err(CliError::Usage(format!("--start {} is after --end {}", args.start, args.end)));
@@ -212,7 +242,7 @@ mod tests {
         assert_eq!((a.cash, a.risk_pct, a.slippage_bps), (Decimal::from(1_000_000), Decimal::new(5, 1), Decimal::from(5)));
         assert_eq!((a.mode, a.slippage_model, a.priority), (Mode::Portfolio, SlippageArg::Adopted, PriorityArg::Alphabetical));
         assert_eq!((a.slippage_mult, a.max_positions), (Decimal::ONE, None));
-        assert_eq!(a.price_basis, PriceBasis::Adjusted);
+        assert_eq!((a.price_basis, a.adv_cap_pct), (PriceBasis::Adjusted, Decimal::ONE));
         assert!(check_holdout(&a).is_ok());
     }
 
@@ -224,6 +254,22 @@ mod tests {
         assert!(!with(&["--priority", "random"]));
         assert!(!with(&["--priority", "alphabetical", "--seed", "3"]));
         assert!(!with(&["--slippage-mult", "0"]));
+    }
+
+    #[test]
+    fn rebalancers_are_portfolio_only_and_unlevered() {
+        let dates = ["--start", "2012-01-01", "--end", "2013-01-01"];
+        let parse = |extra: &[&str]| {
+            let base = ["tq", "backtest", "--data-dir", "d", "--symbols", "NIFTYBEES"];
+            match Cli::try_parse_from(base.iter().chain(&dates).chain(extra)).map(|c| c.command) {
+                Ok(Some(Command::Backtest(a))) => check_holdout(&a).is_ok(),
+                _ => false,
+            }
+        };
+        assert!(parse(&["--strategy", "index-trend-filter", "--max-notional-pct", "100"]));
+        assert!(!parse(&["--strategy", "buy-hold", "--mode", "per-symbol"]));
+        assert!(!parse(&["--strategy", "buy-hold", "--max-notional-pct", "150"]));
+        assert!(StrategyName::MomentumRotation.is_rebalancer() && !StrategyName::Donchian.is_rebalancer());
     }
 
     #[test]

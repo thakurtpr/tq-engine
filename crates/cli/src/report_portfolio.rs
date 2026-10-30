@@ -16,6 +16,7 @@ use crate::backtest::Setup;
 use crate::benchmark::Benchmark;
 use crate::gates::portfolio_rows;
 use crate::markdown::{dec, opt_f64, trade_rows, write_coverage, write_header};
+use crate::report_liquidity::{self, Friction};
 use crate::stats::{trade_stats, TradeStats};
 use crate::universe::Coverage;
 
@@ -31,6 +32,7 @@ pub struct PortfolioView<'a> {
     pub excess_hac_t: Option<f64>,
     /// Gate 4c figures (protocol v2): HAC primary, monthly and per-trade cross-checks.
     pub gate_t: GateT,
+    pub friction: Friction,
 }
 
 pub fn view<'a>(report: &'a RunReport, cash: Decimal, bench: Option<&Benchmark>) -> PortfolioView<'a> {
@@ -45,9 +47,11 @@ pub fn view<'a>(report: &'a RunReport, cash: Decimal, bench: Option<&Benchmark>)
     let excess_hac_t = excess.as_ref().and_then(|ex| hac_t(&ex.iter().map(|e| e.1).collect::<Vec<_>>(), protocol_lag(ex.len(), hold)));
     let trade_stats = trade_stats(&trades);
     let gate_t = gate_t(&daily, hold, trade_stats.t_month_clustered.map(|c| c.0));
+    let returns = stats(cash, &report.equity_curve);
     PortfolioView {
         report,
-        returns: stats(cash, &report.equity_curve),
+        friction: report_liquidity::friction(report, cash, returns.years),
+        returns,
         trades: trade_stats,
         exposure_pct: exposure_pct(&report.equity_curve, &report.exposure_curve),
         excess_t,
@@ -71,7 +75,10 @@ pub fn render(ctx: &Context, v: &PortfolioView) -> String {
     let _ = write_header(&mut out, ctx.args, ctx.setup, ctx.manifest);
     let _ = write_headline(&mut out, v, ctx.bench);
     let _ = write_trades(&mut out, &v.trades);
-    let _ = write_funnel(&mut out, v.report);
+    if !ctx.args.strategy.is_rebalancer() {
+        let _ = write_funnel(&mut out, v.report);
+    }
+    let _ = report_liquidity::write(&mut out, v.report, &v.friction, ctx.args.strategy.is_rebalancer());
     let _ = write_years(&mut out, ctx.args.cash, v.report, ctx.bench);
     let _ = write_gates(&mut out, v, ctx.bench);
     if let Some(c) = ctx.coverage {
@@ -117,10 +124,18 @@ fn write_headline(out: &mut String, v: &PortfolioView, bench: Option<&Benchmark>
     if let Some((t, g)) = v.excess_t {
         writeln!(out, "Strategy minus benchmark daily return: HAC t = {} (L = {}); month-clustered t = {t:.2} (G = {g}).\n", opt_f64(v.excess_hac_t), v.gate_t.lag)?;
     }
-    if bench.is_some() {
-        writeln!(out, "The benchmark is the NIFTY 50 **price** index (^NSEI): it excludes dividends, so it understates the total-return index by roughly 1.2-1.5% a year. Beating it is necessary, not sufficient.\n")?;
+    if let Some(b) = bench {
+        writeln!(out, "{}\n", benchmark_note(&b.name))?;
     }
     Ok(())
+}
+
+fn benchmark_note(name: &str) -> String {
+    if name == "NSEI" {
+        "The benchmark is the NIFTY 50 **price** index (^NSEI): it excludes dividends, so it understates the total-return index by roughly 1.2-1.5% a year. Beating it is necessary, not sufficient.".into()
+    } else {
+        format!("The benchmark is frictionless buy-and-hold of {name} on its dividend-adjusted closes (for NIFTYBEES: close to the NIFTY 50 TRI less the fund's expense ratio and tracking error).")
+    }
 }
 
 fn write_trades(out: &mut String, t: &TradeStats) -> std::fmt::Result {
@@ -180,7 +195,7 @@ fn write_years(out: &mut String, cash: Decimal, r: &RunReport, bench: Option<&Be
 fn write_gates(out: &mut String, v: &PortfolioView, bench: Option<&Benchmark>) -> std::fmt::Result {
     writeln!(out, "## Gates (docs/validation-protocol.md), in-sample, this run only\n")?;
     writeln!(out, "| # | Gate | Threshold | Value | Verdict |\n| --- | --- | --- | --- | --- |")?;
-    for g in portfolio_rows(&v.trades, &v.returns, &v.gate_t, bench.map(|b| &b.stats)) {
+    for g in portfolio_rows(&v.trades, &v.returns, &v.gate_t, bench.map(|b| (b.name.as_str(), &b.stats))) {
         writeln!(out, "| {} | {} | {} | {} | {} |", g.id, g.name, g.threshold, g.value, g.verdict.label())?;
     }
     writeln!(out, "\nNot assessable from one run: cost stress (5b, needs the 2x run), walk-forward OOS (2, 4), robustness (5), DSR/PBO (6), Monte Carlo (7). A PASS here is in-sample only.\n")

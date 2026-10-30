@@ -6,6 +6,7 @@ mod benchmark;
 mod gates;
 mod manifest;
 mod markdown;
+mod report_liquidity;
 mod report_portfolio;
 mod stats;
 mod summary;
