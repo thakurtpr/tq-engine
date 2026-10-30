@@ -1,0 +1,29 @@
+[package]
+name = "tq-live"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Intraday paper-trading runner: historical replay or live public feed. Paper only, never places orders."
+
+[[bin]]
+name = "tq-live"
+path = "src/main.rs"
+
+[dependencies]
+tq-core.workspace = true
+tq-risk.workspace = true
+tq-broker.workspace = true
+tq-costs.workspace = true
+tq-strategy.workspace = true
+tq-indicators.workspace = true
+tq-data.workspace = true
+tq-backtest.workspace = true
+tq-feeds = { path = "../feeds" }
+rust_decimal.workspace = true
+thiserror.workspace = true
+serde_json = "1"
+clap = { version = "4.5", features = ["derive"] }
+chrono = { version = "0.4.38", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+rust_decimal_macros.workspace = true
