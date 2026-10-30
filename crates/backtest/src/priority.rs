@@ -9,7 +9,7 @@
 //! - `Random { seed }`: a seeded shuffle per day, for a sensitivity analysis over seeds. Uses
 //!   SplitMix64 (Steele, Lea & Flood 2014) so runs are reproducible without a `rand` dependency.
 
-use tq_core::{OrderRequest, Timestamp};
+use tq_core::{OrderRequest, Symbol, Timestamp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Priority {
@@ -22,12 +22,22 @@ impl Priority {
     /// Orders one day's entry candidates in place.
     pub fn order(&self, ts: Timestamp, candidates: &mut [OrderRequest]) {
         candidates.sort_by(|a, b| a.symbol.0.cmp(&b.symbol.0));
+        self.shuffle(ts, candidates);
+    }
+
+    /// Orders one day's rebalance buys in place (same rule as [`Self::order`]).
+    pub fn order_symbols(&self, ts: Timestamp, symbols: &mut [Symbol]) {
+        symbols.sort_by(|a, b| a.0.cmp(&b.0));
+        self.shuffle(ts, symbols);
+    }
+
+    /// Shuffles a ticker-sorted list so the result depends only on (seed, day, symbols).
+    fn shuffle<T>(&self, ts: Timestamp, items: &mut [T]) {
         if let Priority::Random { seed } = *self {
-            // Shuffle the sorted list so the result depends only on (seed, day, symbols).
             let mut rng = SplitMix64::new(seed ^ (ts as u64).rotate_left(17));
-            for i in (1..candidates.len()).rev() {
+            for i in (1..items.len()).rev() {
                 let j = rng.below(i as u64 + 1) as usize;
-                candidates.swap(i, j);
+                items.swap(i, j);
             }
         }
     }
@@ -86,6 +96,15 @@ mod tests {
         Priority::Random { seed: 7 }.order(42, &mut a);
         Priority::Random { seed: 7 }.order(42, &mut b);
         assert_eq!(names(&a), names(&b));
+    }
+
+    #[test]
+    fn symbols_follow_the_same_order_as_orders() {
+        let mut orders = many();
+        let mut syms: Vec<Symbol> = many().into_iter().map(|o| o.symbol).collect();
+        Priority::Random { seed: 9 }.order(42, &mut orders);
+        Priority::Random { seed: 9 }.order_symbols(42, &mut syms);
+        assert_eq!(names(&orders), syms.iter().map(|s| s.0.clone()).collect::<Vec<_>>());
     }
 
     #[test]

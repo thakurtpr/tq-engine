@@ -11,12 +11,17 @@
 //! [`run_portfolio`] steps many symbols on one date calendar with ONE cash balance and ONE
 //! `AccountState`, so the position cap, daily loss limit and kill switch bind across the
 //! portfolio. [`run`] is the one-symbol case (a diagnostic, not a performance claim).
+//!
+//! [`run_rebalance`] is the cross-sectional path: a `Rebalancer` names target weights after each
+//! month-end close and the engine trades to them at the next open (sells first, then buys
+//! through the risk gate), paying the same costs and slippage.
 
 mod config;
 mod engine;
 pub mod metrics;
 mod portfolio;
 mod priority;
+mod rebalance;
 mod report;
 pub mod returns;
 pub mod tstats;
@@ -32,6 +37,7 @@ pub use crate::config::{RunConfig, Sizing, DEFAULT_RISK_PCT, DEFAULT_SLIPPAGE_BP
 pub use crate::metrics::Metrics;
 pub use crate::portfolio::{run_portfolio, Series};
 pub use crate::priority::Priority;
+pub use crate::rebalance::{run_rebalance, CASH_BUFFER_PCT, MIN_TRADE_PCT};
 pub use crate::report::{ExitReason, RunReport, Trade};
 pub use crate::slippage::{Liquidity, LiquidityStats, SlippageModel};
 

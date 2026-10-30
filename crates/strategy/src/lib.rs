@@ -3,6 +3,10 @@
 
 use tq_core::{Bar, Fill, OrderRequest, Symbol};
 
+mod rebalance;
+
+pub use rebalance::{weight_sum_ok, History, Rebalancer, Target};
+
 /// What a strategy wants after seeing a bar.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Signal {

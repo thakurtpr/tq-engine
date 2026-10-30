@@ -6,6 +6,10 @@ use rust_decimal::Decimal;
 use thiserror::Error;
 use tq_core::{CoreError, OrderRequest, Price, Qty, Side};
 
+mod rebalance;
+
+pub use rebalance::NO_STOP;
+
 const HUNDRED: Decimal = Decimal::ONE_HUNDRED;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -202,6 +206,15 @@ impl RiskGate {
     }
 
     fn check_account(&self, acct: &AccountState) -> Result<(), RiskViolation> {
+        self.check_loss_limits(acct)?;
+        if acct.open_positions >= self.limits.max_open_positions {
+            return Err(RiskViolation::TooManyPositions);
+        }
+        Ok(())
+    }
+
+    /// Daily loss limit and drawdown limit (the kill switch itself is checked by callers).
+    fn check_loss_limits(&self, acct: &AccountState) -> Result<(), RiskViolation> {
         let l = &self.limits;
         let day_loss = acct.start_of_day_equity - acct.equity;
         if day_loss >= acct.start_of_day_equity * l.max_daily_loss_pct / HUNDRED {
@@ -209,9 +222,6 @@ impl RiskGate {
         }
         if self.drawdown_breached(acct) {
             return Err(RiskViolation::Drawdown);
-        }
-        if acct.open_positions >= l.max_open_positions {
-            return Err(RiskViolation::TooManyPositions);
         }
         Ok(())
     }

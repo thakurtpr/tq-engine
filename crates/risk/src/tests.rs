@@ -187,3 +187,38 @@ fn confirmed_limits_allow_live_startup() {
     let l = RiskLimits { user_confirmed: true, ..RiskLimits::default() };
     assert!(l.ensure_live_ready().is_ok());
 }
+
+fn rebuy(qty: Decimal, price: Decimal, held: Decimal, a: &AccountState) -> Result<ApprovedOrder, RiskViolation> {
+    gate().check_rebalance_buy(Symbol("NSE:TCS".into()), qty, price, held, a)
+}
+
+#[test]
+fn rebalance_buy_within_notional_cap_is_approved_without_a_stop() {
+    // 20 * 1000 = 20_000 = 20% of equity: at the cap, allowed. No stop -> whole notional at risk.
+    let approved = rebuy(dec!(20), dec!(1000), dec!(0), &acct()).unwrap();
+    assert_eq!((approved.order().qty, approved.order().entry), (dec!(20), dec!(1000)));
+    assert_eq!(approved.order().stop, NO_STOP);
+}
+
+#[test]
+fn rebalance_buy_caps_the_resulting_position_not_just_the_order() {
+    let r = rebuy(dec!(5), dec!(1000), dec!(16), &acct());
+    assert!(matches!(r, Err(RiskViolation::PositionSize { .. })), "{r:?}");
+}
+
+#[test]
+fn rebalance_buy_counts_positions_only_when_opening_one() {
+    let full = AccountState { open_positions: 5, ..acct() };
+    assert_eq!(rebuy(dec!(1), dec!(100), dec!(0), &full), Err(RiskViolation::TooManyPositions));
+    assert!(rebuy(dec!(1), dec!(100), dec!(3), &full).is_ok(), "topping up an existing holding");
+}
+
+#[test]
+fn rebalance_buy_respects_kill_switch_and_loss_limits() {
+    assert_eq!(rebuy(dec!(1), dec!(100), dec!(0), &AccountState { kill_switch: true, ..acct() }), Err(RiskViolation::KillSwitch));
+    let down = AccountState { equity: dec!(98000), peak_equity: dec!(100000), ..acct() };
+    assert_eq!(rebuy(dec!(1), dec!(100), dec!(0), &down), Err(RiskViolation::DailyLoss));
+    let dd = AccountState { equity: dec!(90000), start_of_day_equity: dec!(90000), ..acct() };
+    assert_eq!(rebuy(dec!(1), dec!(100), dec!(0), &dd), Err(RiskViolation::Drawdown));
+    assert!(matches!(rebuy(dec!(0), dec!(100), dec!(0), &acct()), Err(RiskViolation::InvalidOrder(_))));
+}

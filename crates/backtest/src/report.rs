@@ -68,6 +68,11 @@ pub struct RunReport {
     /// Fills (entries and exits) above the impact threshold (0.05% of ADV), where the square-root
     /// term priced the fill. Zero means the impact model was never exercised.
     pub fills_above_impact_threshold: usize,
+    /// Rebalance dates whose targets were traded (rebalancing path only).
+    pub rebalances: usize,
+    /// Rebalance fills where 20-day ADV was unknown or zero, so the ADV cap could not apply and
+    /// only the base slippage was charged (rebalancing path only).
+    pub fills_without_adv: usize,
     /// Rupee value of every fill, buys plus sells, at filled prices.
     pub turnover: Decimal,
     /// Rupees paid to slippage on every fill (including positions still open at the end).

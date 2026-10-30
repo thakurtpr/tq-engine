@@ -48,7 +48,7 @@ pub fn run_portfolio<S: Strategy, B: Broker>(
     Ok(engine.finish())
 }
 
-fn validate_series(series: &[Series]) -> Result<(), BacktestError> {
+pub(crate) fn validate_series(series: &[Series]) -> Result<(), BacktestError> {
     let mut seen = HashSet::new();
     for s in series {
         if !seen.insert(&s.symbol) {
@@ -62,7 +62,7 @@ fn validate_series(series: &[Series]) -> Result<(), BacktestError> {
 }
 
 /// Each timestamp's bars, symbols in ticker order.
-fn calendar(series: &[Series]) -> BTreeMap<Timestamp, Vec<DayBar<'_>>> {
+pub(crate) fn calendar(series: &[Series]) -> BTreeMap<Timestamp, Vec<DayBar<'_>>> {
     let mut sorted: Vec<&Series> = series.iter().collect();
     sorted.sort_by(|a, b| a.symbol.0.cmp(&b.symbol.0));
     let mut days: BTreeMap<Timestamp, Vec<DayBar>> = BTreeMap::new();
