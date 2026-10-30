@@ -65,6 +65,13 @@ pub struct RunReport {
     pub entries_outside_universe: usize,
     /// Entries cut down to the liquidity cap (1% of 20-day ADV); see `slippage.rs`.
     pub entries_adv_capped: usize,
+    /// Fills (entries and exits) above the impact threshold (0.05% of ADV), where the square-root
+    /// term priced the fill. Zero means the impact model was never exercised.
+    pub fills_above_impact_threshold: usize,
+    /// Rupee value of every fill, buys plus sells, at filled prices.
+    pub turnover: Decimal,
+    /// Rupees paid to slippage on every fill (including positions still open at the end).
+    pub total_slippage: Decimal,
     pub rejections: Vec<String>,
     /// Bar at which the drawdown limit engaged the kill switch, if it did.
     pub kill_switch_engaged_at: Option<Timestamp>,

@@ -12,7 +12,7 @@ use tq_risk::{RiskGate, RiskLimits};
 use tq_strategies::{DonchianBreakout, TrendPullback};
 use tq_strategy::Strategy;
 
-use crate::args::{BacktestArgs, PriorityArg, SlippageArg, StrategyName};
+use crate::args::{BacktestArgs, PriceBasis, PriorityArg, SlippageArg, StrategyName};
 use crate::stats::SymbolResult;
 use crate::CliError;
 
@@ -44,7 +44,7 @@ impl Setup {
             initial_cash: args.cash,
             sizing: Sizing::RiskPct(args.risk_pct),
             slippage_bps: args.slippage_bps,
-            slippage_model: (args.slippage_model == SlippageArg::Adopted).then(SlippageModel::default),
+            slippage_model: (args.slippage_model == SlippageArg::Adopted).then(|| slippage_model(args.price_basis)),
             slippage_mult: args.slippage_mult,
             priority: match (args.priority, args.seed) {
                 (PriorityArg::Random, Some(seed)) => Priority::Random { seed },
@@ -125,7 +125,26 @@ impl Setup {
     }
 }
 
+/// The adopted model; the Rs 0.05 tick only applies to unadjusted (on-grid) prices.
+pub fn slippage_model(basis: PriceBasis) -> SlippageModel {
+    match basis {
+        PriceBasis::Unadjusted => SlippageModel::default(),
+        PriceBasis::Adjusted => SlippageModel { tick: Decimal::ZERO, ..SlippageModel::default() },
+    }
+}
+
 fn run_with<S: Strategy>(mut strategy: S, gate: &RiskGate, config: &RunConfig, symbol: &Symbol, bars: &[Bar]) -> Result<RunReport, String> {
     let mut broker = Paper::default();
     run(&mut strategy, &mut broker, gate, config, symbol, bars).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tick_rounding_only_on_unadjusted_prices() {
+        assert_eq!(slippage_model(PriceBasis::Adjusted).tick, Decimal::ZERO);
+        assert_eq!(slippage_model(PriceBasis::Unadjusted).tick, Decimal::new(5, 2));
+    }
 }

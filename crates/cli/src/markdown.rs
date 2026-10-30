@@ -6,7 +6,7 @@ use rust_decimal::Decimal;
 use tq_backtest::RunReport;
 use tq_data::ist_date;
 
-use crate::args::{BacktestArgs, Mode, SlippageArg};
+use crate::args::{BacktestArgs, Mode, PriceBasis, SlippageArg};
 use crate::backtest::Setup;
 use crate::gates::PER_SYMBOL_NOTE;
 use crate::stats::{Pooled, SymbolResult, TradeStats, TOP_TRADES_DROPPED};
@@ -37,7 +37,8 @@ pub fn write_header(out: &mut String, args: &BacktestArgs, setup: &Setup, manife
     writeln!(out, "- Window: {} to {} (earlier bars warm up indicators only)", args.start, args.end)?;
     writeln!(out, "- Starting cash: Rs {}; risk per trade {}% of equity", args.cash, args.risk_pct)?;
     let model = match args.slippage_model {
-        SlippageArg::Adopted => "adopted model (docs/slippage-model.md: sqrt impact > 0.05% ADV, 2x stop exits, 1% ADV entry cap, Rs 0.05 ticks)",
+        SlippageArg::Adopted if args.price_basis == PriceBasis::Unadjusted => "adopted model (docs/slippage-model.md: sqrt impact > 0.05% ADV, 2x stop exits, 1% ADV entry cap, Rs 0.05 ticks)",
+        SlippageArg::Adopted => "adopted model (docs/slippage-model.md: sqrt impact > 0.05% ADV, 2x stop exits, 1% ADV entry cap); no tick rounding on adjusted prices",
         SlippageArg::Flat => "flat",
     };
     writeln!(out, "- Slippage: {} bps base per side x{}, {model}; costs: Zerodha NSE delivery", args.slippage_bps, args.slippage_mult)?;

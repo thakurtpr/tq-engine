@@ -59,6 +59,7 @@ impl<S: Strategy, B: Broker> Engine<'_, S, B> {
         };
         self.cash -= fill.price * fill.qty + fill.costs;
         self.total_costs += fill.costs;
+        self.count_fill(&fill, (fill.price - bar.open) * fill.qty, &liq);
         let position = Position {
             qty: fill.qty,
             avg_entry: fill.price,
@@ -117,6 +118,7 @@ impl<S: Strategy, B: Broker> Engine<'_, S, B> {
         match self.broker.close(symbol, pos.qty, ts, price) {
             Ok(fill) => {
                 let exit_slippage = (raw_price - fill.price) * fill.qty;
+                self.count_fill(&fill, exit_slippage, &liq);
                 self.record_trade(pos, &fill, reason, exit_slippage);
             }
             Err(e) => {
@@ -147,6 +149,15 @@ impl<S: Strategy, B: Broker> Engine<'_, S, B> {
             slippage: pos.entry_slippage + exit_slippage,
         });
         self.on_fill(fill);
+    }
+
+    /// Turnover, slippage and impact-threshold counters (reporting only).
+    fn count_fill(&mut self, fill: &Fill, slippage: Decimal, liq: &LiquidityStats) {
+        self.report.turnover += fill.price * fill.qty;
+        self.report.total_slippage += slippage;
+        if self.config.above_impact_threshold(fill.qty, liq) {
+            self.report.fills_above_impact_threshold += 1;
+        }
     }
 
     fn on_fill(&mut self, fill: &Fill) {

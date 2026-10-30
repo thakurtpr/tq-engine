@@ -13,7 +13,8 @@ use crate::CliError;
 
 const HEADER: &str = "label,strategy,max_positions,kill_switch_pct,slippage_model,slippage_mult,priority,trades,\
 cagr_pct,max_dd_pct,sharpe,t_month_clustered,calmar,exposure_pct,final_equity,bench_cagr_pct,bench_sharpe,\
-bench_max_dd_pct,excess_t,manifest_sha256";
+bench_max_dd_pct,excess_t,hac_t,hac_lag,monthly_t,trade_clustered_t,gate_t,excess_hac_t,fills_above_impact,\
+entries_adv_capped,turnover,total_costs,total_slippage,initial_cash,manifest_sha256";
 
 fn f(x: Option<f64>) -> String {
     x.map_or_else(String::new, |v| format!("{v:.4}"))
@@ -27,7 +28,7 @@ pub fn line(args: &BacktestArgs, setup: &Setup, v: &PortfolioView, bench: Option
     let mut s = String::new();
     let _ = write!(
         s,
-        "{},{:?},{},{},{:?},{},{priority},{},{},{:.4},{},{},{},{},{},{},{},{},{},{manifest_sha}",
+        "{},{:?},{},{},{:?},{},{priority},{},{},{:.4},{},{},{},{},{},{},{},{},{},{},{manifest_sha}",
         args.label.replace(',', ";"),
         args.strategy,
         l.max_open_positions,
@@ -46,8 +47,29 @@ pub fn line(args: &BacktestArgs, setup: &Setup, v: &PortfolioView, bench: Option
         f(b.and_then(|b| b.sharpe)),
         f(b.map(|b| b.max_drawdown_pct)),
         f(v.excess_t.map(|e| e.0)),
+        extra(v, args),
     );
     s
+}
+
+/// Protocol v2 gate-4c figures, liquidity counters and money totals.
+fn extra(v: &PortfolioView, args: &BacktestArgs) -> String {
+    let (g, rep) = (&v.gate_t, v.report);
+    format!(
+        "{},{},{},{},{},{},{},{},{},{},{},{}",
+        f(g.hac),
+        g.lag,
+        f(g.monthly),
+        f(g.per_trade_clustered),
+        f(g.gate),
+        f(v.excess_hac_t),
+        rep.fills_above_impact_threshold,
+        rep.entries_adv_capped,
+        rep.turnover.round_dp(2),
+        rep.metrics.total_costs.round_dp(2),
+        rep.total_slippage.round_dp(2),
+        args.cash,
+    )
 }
 
 /// Appends `line`, writing the header first if the file is new or empty.
@@ -74,6 +96,6 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
         assert_eq!(text, format!("{HEADER}\na\nb\n"));
-        assert_eq!(HEADER.split(',').count(), 20);
+        assert_eq!(HEADER.split(',').count(), 32);
     }
 }

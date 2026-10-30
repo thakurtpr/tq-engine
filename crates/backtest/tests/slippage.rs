@@ -97,3 +97,18 @@ fn stress_multiplier_scales_the_whole_slippage() {
     let (r, _) = go(vec![(SIGNAL_TS, enter())], &adopted(dec!(3)), &bars);
     assert_eq!((r.trades[0].entry_price, r.trades[0].exit_price), (dec!(100.15), dec!(94.70)));
 }
+
+#[test]
+fn turnover_slippage_and_impact_fills_are_counted() {
+    // ADV 1_000: the capped 10-share entry is 1% of ADV, above the 0.05% impact threshold.
+    // A deep book (ADV 1e8) keeps the stop exit below it.
+    let mut bars = history(dec!(1000));
+    bars.push(bar(21, dec!(100), dec!(100), dec!(100), dec!(100000000)));
+    bars.extend((22..42).map(|ts| bar(ts, dec!(100), dec!(100), dec!(100), dec!(100000000))));
+    bars.push(bar(42, dec!(99), dec!(94), dec!(96), dec!(1)));
+    let (r, p) = go(vec![(SIGNAL_TS, enter())], &adopted(dec!(1)), &bars);
+    let turnover: Decimal = p.fills().iter().map(|f| f.price * f.qty).sum();
+    assert_eq!(r.turnover, turnover);
+    assert_eq!(r.total_slippage, r.trades[0].slippage);
+    assert_eq!(r.fills_above_impact_threshold, 1);
+}

@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 
 use rust_decimal::Decimal;
 use tq_backtest::returns::{civil_date, cluster_t, daily_returns, excess_returns, exposure_pct, month_key, stats, ReturnStats};
+use tq_backtest::tstats::{gate_t, hac_t, longest_hold, protocol_lag, GateT};
 use tq_backtest::{RunReport, Trade};
 use tq_core::Timestamp;
 use tq_data::ist_date;
@@ -26,21 +27,32 @@ pub struct PortfolioView<'a> {
     pub exposure_pct: Option<f64>,
     /// Month-clustered t of strategy minus benchmark daily returns, with the month count.
     pub excess_t: Option<(f64, usize)>,
+    /// HAC t (protocol bandwidth) of strategy minus benchmark daily returns.
+    pub excess_hac_t: Option<f64>,
+    /// Gate 4c figures (protocol v2): HAC primary, monthly and per-trade cross-checks.
+    pub gate_t: GateT,
 }
 
 pub fn view<'a>(report: &'a RunReport, cash: Decimal, bench: Option<&Benchmark>) -> PortfolioView<'a> {
     let trades: Vec<&Trade> = report.trades.iter().collect();
-    let excess_t = bench.and_then(|b| {
-        let ex = excess_returns(&daily_returns(cash, &report.equity_curve), &b.returns);
+    let daily = daily_returns(cash, &report.equity_curve);
+    let hold = longest_hold(&report.equity_curve, &report.trades);
+    let excess = bench.map(|b| excess_returns(&daily, &b.returns));
+    let excess_t = excess.as_ref().and_then(|ex| {
         let keys: Vec<(i64, u32)> = ex.iter().map(|e| month_key(e.0)).collect();
         cluster_t(&ex.iter().map(|e| e.1).collect::<Vec<_>>(), &keys)
     });
+    let excess_hac_t = excess.as_ref().and_then(|ex| hac_t(&ex.iter().map(|e| e.1).collect::<Vec<_>>(), protocol_lag(ex.len(), hold)));
+    let trade_stats = trade_stats(&trades);
+    let gate_t = gate_t(&daily, hold, trade_stats.t_month_clustered.map(|c| c.0));
     PortfolioView {
         report,
         returns: stats(cash, &report.equity_curve),
-        trades: trade_stats(&trades),
+        trades: trade_stats,
         exposure_pct: exposure_pct(&report.equity_curve, &report.exposure_curve),
         excess_t,
+        excess_hac_t,
+        gate_t,
     }
 }
 
@@ -90,7 +102,12 @@ fn write_headline(out: &mut String, v: &PortfolioView, bench: Option<&Benchmark>
     writeln!(out, "| Total return | {} | {} |", pct(Some(r.total_return_pct)), col(&|s| pct(Some(s.total_return_pct))))?;
     writeln!(out, "| CAGR | {} | {} |", pct(r.cagr_pct), col(&|s| pct(s.cagr_pct)))?;
     writeln!(out, "| Sharpe (daily, annualised, rf 0) | {} | {} |", opt_f64(r.sharpe), col(&|s| opt_f64(s.sharpe)))?;
-    writeln!(out, "| t, month-clustered daily returns | {} (G = {}) | {} |", opt_f64(r.t_month_clustered), r.months, col(&|s| opt_f64(s.t_month_clustered)))?;
+    let g = &v.gate_t;
+    writeln!(out, "| t, HAC Newey-West daily returns (gate 4c primary, L = {}) | {} | - |", g.lag, opt_f64(g.hac))?;
+    writeln!(out, "| t, monthly returns (4c cross-check) | {} | - |", opt_f64(g.monthly))?;
+    writeln!(out, "| t, per-trade, entry-month clustered (4c cross-check) | {} | - |", opt_f64(g.per_trade_clustered))?;
+    writeln!(out, "| **Gate 4c t** (HAC, or lowest if a cross-check is > 0.5 below) | **{}** | - |", opt_f64(g.gate))?;
+    writeln!(out, "| t, month-clustered daily returns (backtest-03 figure) | {} (G = {}) | {} |", opt_f64(r.t_month_clustered), r.months, col(&|s| opt_f64(s.t_month_clustered)))?;
     writeln!(out, "| Max drawdown | {:.2}% | {} |", r.max_drawdown_pct, col(&|s| format!("{:.2}%", s.max_drawdown_pct)))?;
     writeln!(out, "| Calmar (CAGR / max DD) | {} | {} |", opt_f64(r.calmar), col(&|s| opt_f64(s.calmar)))?;
     writeln!(out, "| Exposure (mean invested / equity) | {} | 100% |", pct(v.exposure_pct))?;
@@ -98,7 +115,7 @@ fn write_headline(out: &mut String, v: &PortfolioView, bench: Option<&Benchmark>
     writeln!(out, "| Final equity (Rs) | {} | - |", rep.equity_curve.last().map_or_else(|| "n/a".into(), |p| dec(p.1)))?;
     writeln!(out, "| Kill switch engaged | {kill} | - |\n")?;
     if let Some((t, g)) = v.excess_t {
-        writeln!(out, "Strategy minus benchmark daily return: month-clustered t = {t:.2} (G = {g}).\n")?;
+        writeln!(out, "Strategy minus benchmark daily return: HAC t = {} (L = {}); month-clustered t = {t:.2} (G = {g}).\n", opt_f64(v.excess_hac_t), v.gate_t.lag)?;
     }
     if bench.is_some() {
         writeln!(out, "The benchmark is the NIFTY 50 **price** index (^NSEI): it excludes dividends, so it understates the total-return index by roughly 1.2-1.5% a year. Beating it is necessary, not sufficient.\n")?;
@@ -163,7 +180,7 @@ fn write_years(out: &mut String, cash: Decimal, r: &RunReport, bench: Option<&Be
 fn write_gates(out: &mut String, v: &PortfolioView, bench: Option<&Benchmark>) -> std::fmt::Result {
     writeln!(out, "## Gates (docs/validation-protocol.md), in-sample, this run only\n")?;
     writeln!(out, "| # | Gate | Threshold | Value | Verdict |\n| --- | --- | --- | --- | --- |")?;
-    for g in portfolio_rows(&v.trades, &v.returns, bench.map(|b| &b.stats)) {
+    for g in portfolio_rows(&v.trades, &v.returns, &v.gate_t, bench.map(|b| &b.stats)) {
         writeln!(out, "| {} | {} | {} | {} | {} |", g.id, g.name, g.threshold, g.value, g.verdict.label())?;
     }
     writeln!(out, "\nNot assessable from one run: cost stress (5b, needs the 2x run), walk-forward OOS (2, 4), robustness (5), DSR/PBO (6), Monte Carlo (7). A PASS here is in-sample only.\n")

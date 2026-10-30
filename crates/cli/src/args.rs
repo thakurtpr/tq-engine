@@ -70,6 +70,15 @@ pub enum SlippageArg {
     Flat,
 }
 
+/// Whether prices are on the exchange's tick grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PriceBasis {
+    /// Split/dividend-adjusted (Yahoo `auto_adjust`): off the tick grid, so no tick rounding.
+    Adjusted,
+    /// Raw traded prices: fills are rounded to the Rs 0.05 tick against the trader.
+    Unadjusted,
+}
+
 #[derive(Debug, Args)]
 pub struct BacktestArgs {
     #[arg(long, value_enum, default_value = "portfolio")]
@@ -105,6 +114,9 @@ pub struct BacktestArgs {
     pub slippage_bps: Decimal,
     #[arg(long, value_enum, default_value = "adopted")]
     pub slippage_model: SlippageArg,
+    /// Adjusted prices skip the Rs 0.05 tick rounding (review-backtest-03, section 3).
+    #[arg(long, value_enum, default_value = "adjusted")]
+    pub price_basis: PriceBasis,
     /// Stress multiplier on all slippage (protocol cost stress: 1, 2, 3).
     #[arg(long, default_value = "1")]
     pub slippage_mult: Decimal,
@@ -200,6 +212,7 @@ mod tests {
         assert_eq!((a.cash, a.risk_pct, a.slippage_bps), (Decimal::from(1_000_000), Decimal::new(5, 1), Decimal::from(5)));
         assert_eq!((a.mode, a.slippage_model, a.priority), (Mode::Portfolio, SlippageArg::Adopted, PriorityArg::Alphabetical));
         assert_eq!((a.slippage_mult, a.max_positions), (Decimal::ONE, None));
+        assert_eq!(a.price_basis, PriceBasis::Adjusted);
         assert!(check_holdout(&a).is_ok());
     }
 

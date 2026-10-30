@@ -19,6 +19,7 @@ mod portfolio;
 mod priority;
 mod report;
 pub mod returns;
+pub mod tstats;
 mod slippage;
 
 use thiserror::Error;

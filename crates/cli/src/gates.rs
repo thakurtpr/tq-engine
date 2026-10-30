@@ -1,12 +1,14 @@
 //! Validation-protocol gates (`docs/validation-protocol.md`) that one run can assess.
 //!
 //! Only a shared-account portfolio run can assess edge gates: independent per-symbol accounts
-//! take every signal at once, which the position cap forbids (review, section 5.1). Gate 4c uses
-//! the review's amendment: a month-clustered t of PORTFOLIO DAILY returns, not the naive
-//! per-trade t. Everything here is in-sample (development window), not walk-forward OOS.
+//! take every signal at once, which the position cap forbids (review, section 5.1). Gate 4c follows
+//! protocol v2: the Newey-West HAC t of PORTFOLIO DAILY returns, replaced by the lowest of HAC,
+//! monthly-return t and per-trade month-clustered t when a cross-check is more than 0.5 below it
+//! (`tq_backtest::tstats`). Everything here is in-sample (development window), not walk-forward OOS.
 
 use rust_decimal::Decimal;
 use tq_backtest::returns::ReturnStats;
+use tq_backtest::tstats::GateT;
 
 use crate::stats::TradeStats;
 
@@ -62,7 +64,7 @@ fn d2(x: Option<Decimal>) -> String {
 }
 
 /// Gates for a portfolio run. `bench` is the price-index benchmark, if one was given.
-pub fn portfolio_rows(t: &TradeStats, r: &ReturnStats, bench: Option<&ReturnStats>) -> Vec<Gate> {
+pub fn portfolio_rows(t: &TradeStats, r: &ReturnStats, g: &GateT, bench: Option<&ReturnStats>) -> Vec<Gate> {
     let share = t.top_symbol_share.as_ref();
     let mut rows = vec![
         gate("3a", "Closed trades", ">= 200", t.trades.to_string(), Some(t.trades >= 200)),
@@ -71,12 +73,16 @@ pub fn portfolio_rows(t: &TradeStats, r: &ReturnStats, bench: Option<&ReturnStat
         gate("3e", "Net P&L without best 5 trades", "> 0", format!("Rs {}", t.net_pnl_without_top_trades.round_dp(0)), Some(t.net_pnl_without_top_trades > Decimal::ZERO)),
         gate("4a", "Mean net trade %", ">= 0.5%", d2(Some(t.mean_net_trade_pct)), Some(t.mean_net_trade_pct >= Decimal::new(5, 1))),
         gate("4b", "Expectancy (mean R)", ">= +0.20R", d2(t.mean_r), t.mean_r.map(|m| m >= Decimal::new(2, 1))),
-        gate("4c", "t-stat, month-clustered daily portfolio returns", ">= 3.0", f2(r.t_month_clustered), r.t_month_clustered.map(|x| x >= 3.0)),
+        gate("4c", "t, HAC daily portfolio returns (lowest-of-three rule)", ">= 3.0", gate_value(g), g.gate.map(|x| x >= 3.0)),
         gate("4d", "Profit factor (net)", ">= 1.3", d2(t.profit_factor), t.profit_factor.map(|p| p >= Decimal::new(13, 1))),
         gate("4e", "Sharpe, daily portfolio returns", ">= 0.8", f2(r.sharpe), r.sharpe.map(|s| s >= 0.8)),
     ];
     rows.push(benchmark_gate(r, bench));
     rows
+}
+
+fn gate_value(g: &GateT) -> String {
+    format!("{} (HAC {}, L = {}; monthly {}; per-trade {})", f2(g.gate), f2(g.hac), g.lag, f2(g.monthly), f2(g.per_trade_clustered))
 }
 
 /// 4f: strategy Sharpe AND Calmar above buy-and-hold. Against the price index this is
@@ -103,7 +109,8 @@ mod tests {
     #[test]
     fn edge_gates_use_portfolio_figures() {
         let t = TradeStats { trades: 300, symbols_traded: 40, mean_net_trade_pct: dec!(0.6), mean_r: Some(dec!(0.1)), profit_factor: Some(dec!(1.4)), net_pnl_without_top_trades: dec!(-1), ..TradeStats::default() };
-        let rows = portfolio_rows(&t, &returns(0.9, 0.5, 2.0), None);
+        let g = GateT { hac: Some(3.2), monthly: Some(2.5), gate: Some(2.5), ..GateT::default() };
+        let rows = portfolio_rows(&t, &returns(0.9, 0.5, 4.0), &g, None);
         let v = |id: &str| rows.iter().find(|g| g.id == id).map(|g| g.verdict);
         assert_eq!((v("3a"), v("3e"), v("4a"), v("4b")), (Some(Verdict::Pass), Some(Verdict::Fail), Some(Verdict::Pass), Some(Verdict::Fail)));
         assert_eq!((v("4c"), v("4d"), v("4e")), (Some(Verdict::Fail), Some(Verdict::Pass), Some(Verdict::Pass)));

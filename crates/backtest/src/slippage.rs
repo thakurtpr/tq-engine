@@ -75,6 +75,12 @@ impl SlippageModel {
         }
     }
 
+    /// True when `qty` is above the impact threshold and ADV is known, i.e. the square-root
+    /// term (not just the base rate) priced the fill.
+    pub fn above_threshold(&self, qty: Qty, stats: &LiquidityStats) -> bool {
+        stats.adv.filter(|a| *a > Decimal::ZERO).is_some_and(|adv| qty / adv * HUNDRED > self.impact_threshold_adv_pct)
+    }
+
     /// Square-root formula, only when the order exceeds the threshold and ADV and sigma are known.
     fn impact_bps(&self, qty: Qty, stats: &LiquidityStats) -> Option<Decimal> {
         let adv = stats.adv.filter(|a| *a > Decimal::ZERO)?;
@@ -173,6 +179,14 @@ mod tests {
         // 1% of ADV, sigma 1.5%: 3.5 + 0.7 * 0.015 * 0.1 * 10_000 = 14.0 bps (doc table: 11.0-18.5).
         let m = SlippageModel::default();
         assert_eq!(m.bps(dec!(5), dec!(10000), &stats(dec!(1000000), 0.015), false), dec!(14));
+    }
+
+    #[test]
+    fn threshold_test_needs_known_adv() {
+        let m = SlippageModel::default();
+        assert!(!m.above_threshold(dec!(500), &stats(dec!(1000000), 0.01)));
+        assert!(m.above_threshold(dec!(501), &stats(dec!(1000000), 0.01)));
+        assert!(!m.above_threshold(dec!(501), &LiquidityStats::default()));
     }
 
     #[test]

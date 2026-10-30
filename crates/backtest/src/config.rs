@@ -91,6 +91,11 @@ impl RunConfig {
         self.slippage_model.as_ref().map_or(price, |m| m.round_to_tick(price, side))
     }
 
+    /// True when the model's impact term (not the flat base) applies to this fill.
+    pub(crate) fn above_impact_threshold(&self, qty: Qty, liq: &LiquidityStats) -> bool {
+        self.slippage_model.as_ref().is_some_and(|m| m.above_threshold(qty, liq))
+    }
+
     /// Largest entry the liquidity cap allows; `None` without a model (no cap).
     pub(crate) fn adv_cap(&self, liq: &LiquidityStats) -> Option<Qty> {
         self.slippage_model.as_ref().map(|m| m.adv_cap(liq))
