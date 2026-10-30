@@ -1,10 +1,10 @@
-//! Runs one strategy over each symbol independently: fresh cash, broker and strategy per symbol.
+//! Runs one strategy either as a shared-account portfolio or per symbol (fresh account each).
 
 use std::collections::BTreeSet;
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use tq_backtest::{run, RunConfig, RunReport, Sizing};
+use tq_backtest::{run, run_portfolio, Priority, RunConfig, RunReport, Series, SlippageModel, Sizing};
 use tq_broker::Paper;
 use tq_core::{Bar, Symbol, Timestamp};
 use tq_data::{ist_close_ts, ist_date, BarSource, CsvDaily};
@@ -12,11 +12,14 @@ use tq_risk::{RiskGate, RiskLimits};
 use tq_strategies::{DonchianBreakout, TrendPullback};
 use tq_strategy::Strategy;
 
-use crate::args::{BacktestArgs, StrategyName};
+use crate::args::{BacktestArgs, PriorityArg, SlippageArg, StrategyName};
 use crate::stats::SymbolResult;
 use crate::CliError;
 
-/// Everything shared by the per-symbol runs.
+/// Fill-time windows in which entries are allowed; `None` = always.
+pub type EntryWindows = Option<Vec<(Timestamp, Timestamp)>>;
+
+/// Everything shared by the runs of one command.
 pub struct Setup {
     pub gate: RiskGate,
     pub config: RunConfig,
@@ -30,6 +33,7 @@ impl Setup {
         let defaults = RiskLimits::default();
         let limits = RiskLimits {
             max_drawdown_pct: args.max_drawdown_pct.unwrap_or(defaults.max_drawdown_pct),
+            max_open_positions: args.max_positions.unwrap_or(defaults.max_open_positions),
             ..defaults
         };
         if args.risk_pct <= Decimal::ZERO || args.risk_pct > limits.max_risk_per_trade_pct {
@@ -40,6 +44,12 @@ impl Setup {
             initial_cash: args.cash,
             sizing: Sizing::RiskPct(args.risk_pct),
             slippage_bps: args.slippage_bps,
+            slippage_model: (args.slippage_model == SlippageArg::Adopted).then(SlippageModel::default),
+            slippage_mult: args.slippage_mult,
+            priority: match (args.priority, args.seed) {
+                (PriorityArg::Random, Some(seed)) => Priority::Random { seed },
+                _ => Priority::Alphabetical,
+            },
             trade_from: ist_close_ts(args.start),
             entry_windows: None,
         };
@@ -52,11 +62,34 @@ impl Setup {
         })
     }
 
-    /// Runs each ticker; `Some(windows)` restricts when its entries may fill (index membership).
+    /// Each ticker in its own account; `Some(windows)` restricts when its entries may fill.
     pub fn run_all(&self, plan: &[(String, EntryWindows)]) -> Vec<SymbolResult> {
         plan.iter()
             .map(|(s, windows)| SymbolResult { symbol: s.clone(), outcome: self.run_symbol(s, windows) })
             .collect()
+    }
+
+    /// All tickers in ONE account. Tickers without data are returned as not run.
+    pub fn run_portfolio(&self, plan: &[(String, EntryWindows)]) -> Result<(RunReport, Vec<(String, String)>), CliError> {
+        let mut series = Vec::new();
+        let mut skipped = Vec::new();
+        for (ticker, windows) in plan {
+            let symbol = Symbol(format!("NSE:{ticker}"));
+            match self.load(&symbol) {
+                Ok(bars) => series.push(Series { symbol, bars, entry_windows: windows.clone() }),
+                Err(why) => skipped.push((ticker.clone(), why)),
+            }
+        }
+        let report = match self.strategy {
+            StrategyName::TrendPullback => self.portfolio_with(TrendPullback::new(Default::default()), &series),
+            StrategyName::Donchian => self.portfolio_with(DonchianBreakout::new(Default::default()), &series),
+        }?;
+        Ok((report, skipped))
+    }
+
+    fn portfolio_with<S: Strategy, E: std::fmt::Display>(&self, strategy: Result<S, E>, series: &[Series]) -> Result<RunReport, CliError> {
+        let mut strategy = strategy.map_err(|e| CliError::Usage(e.to_string()))?;
+        run_portfolio(&mut strategy, &mut Paper::default(), &self.gate, &self.config, series).map_err(|e| CliError::Usage(e.to_string()))
     }
 
     /// IST dates of `ticker`'s bars up to `--end`; `None` if the file is missing or unreadable.
@@ -91,9 +124,6 @@ impl Setup {
         Ok(bars)
     }
 }
-
-/// Fill-time windows in which entries are allowed; `None` = always.
-pub type EntryWindows = Option<Vec<(Timestamp, Timestamp)>>;
 
 fn run_with<S: Strategy>(mut strategy: S, gate: &RiskGate, config: &RunConfig, symbol: &Symbol, bars: &[Bar]) -> Result<RunReport, String> {
     let mut broker = Paper::default();

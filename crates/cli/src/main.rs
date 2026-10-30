@@ -2,11 +2,17 @@
 
 mod args;
 mod backtest;
+mod benchmark;
+mod gates;
+mod manifest;
 mod markdown;
+mod report_portfolio;
 mod stats;
+mod summary;
 mod universe;
 
 use std::fs;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -15,8 +21,12 @@ use tq_core::Symbol;
 use tq_data::{quality_report, BarSource, CsvDaily};
 use tq_risk::RiskLimits;
 
-use crate::args::{check_holdout, parse_symbols, BacktestArgs, Cli, Command, QualityArgs};
+use tq_data::ist_close_ts;
+
+use crate::args::{check_holdout, parse_symbols, BacktestArgs, Cli, Command, Mode, QualityArgs};
 use crate::backtest::{EntryWindows, Setup};
+use crate::manifest::Manifest;
+use crate::report_portfolio::Context;
 use crate::universe::{Coverage, Universe};
 
 #[derive(Debug, Error)]
@@ -59,17 +69,50 @@ fn backtest(args: &BacktestArgs) -> Result<(), CliError> {
     check_holdout(args)?;
     let setup = Setup::from_args(args)?;
     let (plan, coverage) = plan(args, &setup)?;
-    let results = setup.run_all(&plan);
-    let pooled = stats::pool(&results);
-    let report = markdown::render(args, &setup, &results, &pooled, coverage.as_ref());
+    let manifest = manifest::build(&inputs(args, &plan))?;
+    let manifest_line = match &args.out {
+        Some(out) => {
+            let path = manifest::write(&manifest, out)?;
+            format!("`{}` ({} files), SHA-256 `{}`", path.display(), manifest.files, manifest.sha256)
+        }
+        None => format!("{} files, SHA-256 `{}` (not written: no --out)", manifest.files, manifest.sha256),
+    };
+    let report = match args.mode {
+        Mode::PerSymbol => {
+            let results = setup.run_all(&plan);
+            markdown::render(args, &setup, &results, &stats::pool(&results), coverage.as_ref(), &manifest_line)
+        }
+        Mode::Portfolio => portfolio(args, &setup, &plan, coverage.as_ref(), (&manifest, &manifest_line))?,
+    };
     match &args.out {
         Some(path) => {
             fs::write(path, &report).map_err(|e| CliError::Write { path: path.display().to_string(), msg: e.to_string() })?;
-            eprintln!("wrote {} ({} symbols, {} trades)", path.display(), pooled.symbols_run, pooled.trades);
+            eprintln!("wrote {}", path.display());
         }
         None => print!("{report}"),
     }
     Ok(())
+}
+
+fn portfolio(args: &BacktestArgs, setup: &Setup, plan: &[(String, EntryWindows)], coverage: Option<&Coverage>, manifest: (&Manifest, &str)) -> Result<String, CliError> {
+    let bench = match &args.benchmark {
+        Some(p) => Some(benchmark::load(p, ist_close_ts(args.start), ist_close_ts(args.end))?),
+        None => None,
+    };
+    let (report, skipped) = setup.run_portfolio(plan)?;
+    let view = report_portfolio::view(&report, args.cash, bench.as_ref());
+    if let Some(path) = &args.summary_csv {
+        summary::append(path, &summary::line(args, setup, &view, bench.as_ref(), &manifest.0.sha256))?;
+    }
+    let ctx = Context { args, setup, coverage, bench: bench.as_ref(), skipped: &skipped, manifest: manifest.1 };
+    Ok(report_portfolio::render(&ctx, &view))
+}
+
+/// Every input CSV the run reads: price files that exist, membership, aliases, benchmark.
+fn inputs(args: &BacktestArgs, plan: &[(String, EntryWindows)]) -> Vec<PathBuf> {
+    let prices = plan.iter().map(|(t, _)| args.data_dir.join(format!("{t}.csv"))).filter(|p| p.is_file());
+    let extra = [&args.universe_file, &args.aliases, &args.benchmark].into_iter().flatten().cloned();
+    prices.chain(extra).collect()
 }
 
 /// Symbols to run with their entry windows, plus member-day coverage for a point-in-time universe.

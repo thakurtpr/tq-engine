@@ -24,8 +24,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Backtest one strategy on each symbol independently and write a Markdown report.
-    Backtest(BacktestArgs),
+    /// Backtest one strategy (shared-account portfolio by default) and write a Markdown report.
+    Backtest(Box<BacktestArgs>),
     /// Print the data quality report (gaps, zero volume, >20% jumps) for each symbol's file.
     Quality(QualityArgs),
 }
@@ -45,8 +45,35 @@ pub enum StrategyName {
     Donchian,
 }
 
+/// How the symbols share capital.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Mode {
+    /// One shared-cash account and one risk state across all symbols (the headline).
+    Portfolio,
+    /// Each symbol in its own fresh account: a diagnostic, not a performance claim.
+    PerSymbol,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PriorityArg {
+    /// Ticker order: deterministic and unrelated to the signal.
+    Alphabetical,
+    /// Seeded daily shuffle (`--seed`), for sensitivity analysis.
+    Random,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SlippageArg {
+    /// docs/slippage-model.md: base bps, sqrt impact, 2x stops, 1% ADV cap, Rs 0.05 ticks.
+    Adopted,
+    /// Flat --slippage-bps on every fill (reproduces backtest-01/02).
+    Flat,
+}
+
 #[derive(Debug, Args)]
 pub struct BacktestArgs {
+    #[arg(long, value_enum, default_value = "portfolio")]
+    pub mode: Mode,
     #[arg(long, value_enum)]
     pub strategy: StrategyName,
     /// Directory of <SYMBOL>.csv daily files (scripts/fetch_daily.py output).
@@ -73,9 +100,32 @@ pub struct BacktestArgs {
     /// Percent of current equity risked per trade (placeholder default, not a user decision).
     #[arg(long, default_value = "0.5")]
     pub risk_pct: Decimal,
-    /// Adverse slippage per side in basis points (validation protocol: 5 for NIFTY 50 names).
+    /// Base adverse slippage per side in basis points (validation protocol: 5 for NIFTY 50 names).
     #[arg(long, default_value = "5")]
     pub slippage_bps: Decimal,
+    #[arg(long, value_enum, default_value = "adopted")]
+    pub slippage_model: SlippageArg,
+    /// Stress multiplier on all slippage (protocol cost stress: 1, 2, 3).
+    #[arg(long, default_value = "1")]
+    pub slippage_mult: Decimal,
+    /// Override the risk gate's max open positions (portfolio mode: across all symbols).
+    #[arg(long)]
+    pub max_positions: Option<usize>,
+    /// Which same-day entry signals get the free slots and cash.
+    #[arg(long, value_enum, default_value = "alphabetical")]
+    pub priority: PriorityArg,
+    /// Seed for `--priority random`.
+    #[arg(long, requires = "priority")]
+    pub seed: Option<u64>,
+    /// Benchmark index CSV (date,open,high,low,close,volume), e.g. data/index/NSEI.csv.
+    #[arg(long)]
+    pub benchmark: Option<PathBuf>,
+    /// Append a one-line run summary (CSV) here.
+    #[arg(long)]
+    pub summary_csv: Option<PathBuf>,
+    /// Free-text label for the summary row.
+    #[arg(long, default_value = "")]
+    pub label: String,
     /// Override the risk gate's drawdown kill switch (percent). Default: the gate's placeholder.
     #[arg(long)]
     pub max_drawdown_pct: Option<Decimal>,
@@ -91,6 +141,12 @@ pub struct BacktestArgs {
 pub fn check_holdout(args: &BacktestArgs) -> Result<(), CliError> {
     if args.aliases.is_some() && args.universe_file.is_none() {
         return Err(CliError::Usage("--aliases only applies with --universe-file".into()));
+    }
+    if args.seed.is_some() != (args.priority == PriorityArg::Random) {
+        return Err(CliError::Usage("--seed goes with --priority random, and random needs a --seed".into()));
+    }
+    if args.slippage_mult <= Decimal::ZERO {
+        return Err(CliError::Usage("--slippage-mult must be positive".into()));
     }
     if args.start > args.end {
         return Err(CliError::Usage(format!("--start {} is after --end {}", args.start, args.end)));
@@ -133,7 +189,7 @@ mod tests {
         let base = ["tq", "backtest", "--strategy", "donchian", "--data-dir", "d", "--symbols", "INFY"];
         let cli = Cli::try_parse_from(base.iter().chain(extra)).unwrap();
         match cli.command {
-            Some(Command::Backtest(a)) => a,
+            Some(Command::Backtest(a)) => *a,
             other => panic!("not a backtest: {other:?}"),
         }
     }
@@ -142,7 +198,19 @@ mod tests {
     fn defaults_match_the_brief() {
         let a = args(&["--start", "2012-01-01", "--end", "2021-12-31"]);
         assert_eq!((a.cash, a.risk_pct, a.slippage_bps), (Decimal::from(1_000_000), Decimal::new(5, 1), Decimal::from(5)));
+        assert_eq!((a.mode, a.slippage_model, a.priority), (Mode::Portfolio, SlippageArg::Adopted, PriorityArg::Alphabetical));
+        assert_eq!((a.slippage_mult, a.max_positions), (Decimal::ONE, None));
         assert!(check_holdout(&a).is_ok());
+    }
+
+    #[test]
+    fn random_priority_and_seed_go_together() {
+        let dates = ["--start", "2012-01-01", "--end", "2013-01-01"];
+        let with = |extra: &[&str]| check_holdout(&args(&[&dates[..], extra].concat())).is_ok();
+        assert!(with(&["--priority", "random", "--seed", "3"]));
+        assert!(!with(&["--priority", "random"]));
+        assert!(!with(&["--priority", "alphabetical", "--seed", "3"]));
+        assert!(!with(&["--slippage-mult", "0"]));
     }
 
     #[test]
