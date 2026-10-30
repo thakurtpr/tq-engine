@@ -1,0 +1,51 @@
+{
+  "after_tax_india": {
+    "mean_after_tax_bps": -36.19408121754497,
+    "net_after_tax_total": "-1052.54",
+    "tax_rate_pct": "30",
+    "tax_total": "66.06"
+  },
+  "breakeven_round_trip_cost_bps": -3.9447830736154157,
+  "counters": {
+    "bars": 1051120,
+    "cancelled": 0,
+    "entry_signals": 7185,
+    "gaps": 1,
+    "missing_bars": 80,
+    "out_of_session": 0,
+    "rejected": 7032,
+    "stale_bars": 0,
+    "suppressed": 0
+  },
+  "days": 730,
+  "exit_reasons": {
+    "signal": 38,
+    "stop": 115
+  },
+  "fees_total": "583.65",
+  "final_equity": "9013.51",
+  "gross_total": "-111.01",
+  "hac_lag": 6,
+  "hac_t_daily": -2.0825111734073145,
+  "initial_cash": "10000",
+  "kill_switch_at": 1643463180000,
+  "mean_fee_bps": 19.99605718931793,
+  "mean_gross_bps": -3.9447830736154157,
+  "mean_net_bps": -33.93886787139653,
+  "mean_slippage_bps": 9.998027608463188,
+  "net_total": "-986.49",
+  "open_at_end": false,
+  "profit_factor_net": 0.11789188734883611,
+  "slippage_total": "291.83",
+  "tds_india": {
+    "sell_turnover": "291624.63",
+    "tds_pct": "1",
+    "tds_per_year_pct_of_initial_capital": 14.581231419289658,
+    "tds_withheld": "2916.25",
+    "tds_withheld_pct_of_initial_capital": 29.162462838579316
+  },
+  "tds_receivable": "0",
+  "total_return_pct": -9.86485428498702,
+  "trades": 153,
+  "win_rate": 0.10457516339869281
+}

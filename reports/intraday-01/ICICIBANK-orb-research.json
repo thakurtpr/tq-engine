@@ -1,0 +1,40 @@
+{
+  "after_tax_india": null,
+  "breakeven_round_trip_cost_bps": -8.28864416894361,
+  "counters": {
+    "bars": 4372,
+    "cancelled": 0,
+    "entry_signals": 38,
+    "gaps": 73,
+    "missing_bars": 20471,
+    "out_of_session": 0,
+    "rejected": 0,
+    "stale_bars": 0,
+    "suppressed": 0
+  },
+  "days": 60,
+  "exit_reasons": {
+    "session_flatten": 23,
+    "stop": 15
+  },
+  "fees_total": "4442.68",
+  "final_equity": "981820.58",
+  "gross_total": "-6267.4",
+  "hac_lag": 3,
+  "hac_t_daily": -2.17902054705023,
+  "initial_cash": "1000000",
+  "kill_switch_at": null,
+  "mean_fee_bps": 5.945547332341282,
+  "mean_gross_bps": -8.28864416894361,
+  "mean_net_bps": -24.230047179200415,
+  "mean_slippage_bps": 9.995855677915529,
+  "net_total": "-18179.42",
+  "open_at_end": false,
+  "profit_factor_net": 0.4240065314086291,
+  "slippage_total": "7469.34",
+  "tds_india": null,
+  "tds_receivable": "0",
+  "total_return_pct": -1.8179418260096682,
+  "trades": 38,
+  "win_rate": 0.3684210526315789
+}
