@@ -1,6 +1,8 @@
 //! Concrete strategies. Owned by the strategy engineer.
 //!
-//! These are textbook long-only swing strategies used to validate the engine end to end.
+//! The swing strategies (`Strategy`) are textbook long-only systems used to validate the engine
+//! end to end. The rebalancers (`Rebalancer`) are pre-registered cross-sectional and index
+//! strategies with literature parameters (backtest-04), plus buy-and-hold as the benchmark.
 //! None of them has a proven edge: treat each as unproven until it passes walk-forward
 //! testing net of the full Indian cost model.
 //!
@@ -14,14 +16,20 @@
 //! - Only the bar passed to `on_bar` and earlier bars are ever used (no look-ahead).
 
 mod book;
+mod buy_and_hold;
 mod donchian_breakout;
+mod index_trend_filter;
+mod momentum_rotation;
 mod trend_pullback;
 
 #[cfg(test)]
 mod test_support;
 
 pub use book::PLACEHOLDER_QTY;
+pub use buy_and_hold::BuyAndHold;
 pub use donchian_breakout::{DonchianBreakout, DonchianBreakoutConfig};
+pub use index_trend_filter::{IndexTrendFilter, IndexTrendFilterConfig};
+pub use momentum_rotation::{MomentumRotation, MomentumRotationConfig};
 pub use trend_pullback::{TrendPullback, TrendPullbackConfig};
 
 use std::fmt;
