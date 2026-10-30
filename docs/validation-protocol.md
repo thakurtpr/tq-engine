@@ -2,6 +2,21 @@
 
 ## Changelog
 
+- **2026-10-30, v3** (approved by `thakur-bc` after `review-backtest-04.md`; **every new threshold below is a
+  [convention] awaiting the user's confirmation**). Evidence: backtest-04's momentum book sat in cash for
+  January 2012 (data too short for the 12-1 rule), the v2 holding-period bandwidth floor gave L = 616 and
+  inflated t for rebalancers (momentum 4.13 vs 2.67 at the Newey-West bandwidth), and an excess-return t for a
+  fully invested book needs about +10.7%/yr of alpha to reach t = 3 (almost no power).
+  1. **HAC bandwidth (section 4):** Newey-West automatic rule only, `L = floor(4 (T/100)^(2/9))`; the holding-period
+     floor is removed; the t at 2L and 4L is shown for transparency.
+  2. **Gate 4c split by strategy type:** `4c-abs` (absolute t >= 3) for absolute-return books; `4c-rel` for long-only
+     benchmark-relative books = HAC t of the benchmark-regression alpha net of the cash rate, >= 3.0 if found by
+     search, >= 2.0 for a single pre-registered literature rule; the minimum detectable alpha is always reported.
+  3. **Gate 4f:** computed like-for-like from the strategy's first invested day, cash credited at the liquid-fund
+     rate, Sharpe reported at rf = 0 and at rf = cash rate; the gate uses the cash-rate Sharpe and Calmar.
+  4. **New rule 0.8 (warm-up):** history must cover the longest lookback before the evaluation window, and
+     strategy and benchmark are compared from the first invested day.
+  Engine note: `tstats.rs` and `gates.rs` still implement v2 (holding-period floor, single 4c) until updated.
 - **2026-10-30, v2** (amended after `review-backtest-01.md`, which reproduced backtest-01/02 exactly and
   showed the pooled statistics overstate what a real account could earn):
   1. **Headline metrics come from one shared-capital portfolio account.** Per-symbol (independent
@@ -21,7 +36,8 @@
 Purpose: stop us from paper trading (or ever risking money on) a strategy whose backtest is luck,
 overfitting or cost-blind. Every threshold is net of the Indian cost model (`costs-india.md`) plus
 slippage. **Thresholds marked [convention] are my proposed defaults, not published constants; the user
-decides them. Items marked [cited] come from the papers listed at the end.** Strict on purpose:
+decides them (the v3 additions in particular are unconfirmed until the user says so). Items marked [cited]
+come from the papers listed at the end.** Strict on purpose:
 rejecting a real edge costs time, accepting a fake one costs money.
 
 Passing this protocol does NOT mean the strategy will make money. It means we found no evidence it
@@ -54,6 +70,13 @@ won't. Paper trading and live trading are separate gates.
    accounts. Count slippage as friction alongside costs (gross P&L must be stated before slippage, or the
    report must say it is after slippage). `per_period_sharpe` in the trials ledger comes from portfolio daily
    returns. Archive the exact data files behind each report with a manifest of SHA-256 hashes.
+8. **(v3) Warm-up and like-for-like start [convention].** Price history must cover the strategy's **longest
+   lookback (plus one rebalance interval) before the evaluation window starts**; otherwise the book is idle at
+   the start for a reason that is not a strategy decision (backtest-04: 246 closes available, 253 needed,
+   so momentum held cash through January 2012 while NIFTYBEES gained 11.9%). Whenever the strategy is not
+   invested from the first day, **strategy and benchmark are compared from the strategy's first invested
+   day** (the close before its first fill), and the report states that date. Cost-paying and frictionless
+   benchmark versions are both measured over the same dates.
 
 ## 1. Data split [convention]
 
@@ -92,20 +115,40 @@ choose parameters.
 
 | Gate | Metric | Pass |
 | --- | --- | --- |
-| 4c | **t-statistic of portfolio daily net returns**, Newey-West (HAC) standard error (see below) | >= **3.0** on the development window and walk-forward OOS [cited: Harvey, Liu & Zhu 2016, new factors need t > 3.0 after multiple testing]. Holdout: **>= 1.65** (one-sided 5%, a single pre-registered test) [convention] |
-| 4c-x | Cross-check: t-stat of the **monthly** net portfolio returns, and the month-clustered t of per-trade returns | report both; if either is more than 0.5 below the HAC t, the gate uses the **lowest** of the three |
+| 4c-abs | **(v3) Absolute-return books** (stop-based swing trading, market-neutral): **t-statistic of portfolio daily net returns**, Newey-West (HAC) standard error (see below) | >= **3.0** on the development window and walk-forward OOS [cited: Harvey, Liu & Zhu 2016, new factors need t > 3.0 after multiple testing]. Holdout: **>= 1.65** (one-sided 5%, a single pre-registered test) [convention] |
+| 4c-rel | **(v3) Long-only benchmark-relative books** (see the definition below): **HAC t of the alpha** from regressing daily net returns on the pre-registered benchmark's daily returns, both net of the cash rate | **>= 3.0** if the strategy or its parameters were found by searching the data; **>= 2.0** for a single rule taken from the published literature with parameters fixed before the first run and N <= 6 in the trials ledger [convention for both]. Holdout: **>= 1.65** [convention]. **Always report the minimum detectable alpha** (2x and 3x the alpha's standard error, annualised) |
+| 4c-x | Cross-check: t-stat of the **monthly** net portfolio returns (for 4c-rel, the monthly-return alpha t), and for 4c-abs also the month-clustered t of per-trade returns | report both; if either is more than 0.5 below the HAC t, the gate uses the **lowest** of them |
 | 4e | Annualised Sharpe (daily portfolio returns, rf = 0, net) | >= 0.8 OOS and >= 0.5 in holdout |
-| 4f | Versus benchmark (NIFTY 50 TRI, same dates, `universe.md`) | portfolio Sharpe AND Calmar both exceed buy-and-hold, otherwise buy the index |
+| 4f | Versus benchmark (NIFTY 50 TRI, same dates, `universe.md`). **(v3)** Computed **like-for-like**: same dates for both books, starting from the strategy's first invested day (rule 0.8), with idle **cash credited at the stated liquid-fund rate** (default 6% a year [convention], sensitivity 4-8%) | portfolio **Sharpe at rf = the cash rate** AND Calmar both exceed buy-and-hold, otherwise buy the index [convention: the cash-rate Sharpe is the gate so crediting cash cannot flatter a book that holds it]. **Also report Sharpe at rf = 0** |
 | 4g | Holdout consistency | holdout net return > 0 and holdout Sharpe >= 50% of walk-forward OOS Sharpe |
 | 4h | Portfolio max drawdown and CAGR | reported; max drawdown is judged in section 7 against the kill switch |
 | 4a, 4b, 4d | Per-trade **diagnostics** on trades the portfolio took: mean net trade >= 0.5% (about 2x the delivery round-trip cost), expectancy >= +0.20R, profit factor >= 1.3 | sanity floors only; **passing them never substitutes for 4c/4e/4f**. Also report a month-block bootstrap 95% interval for the mean trade; its lower bound should be > 0 |
 
-**How the 4c t-stat is computed (v2).** Take the portfolio's daily net return series `r_t` (equity
+**Which 4c applies (v3).** A strategy is declared `absolute` or `benchmark-relative` **in the trials ledger before
+its first run**. Any long-only equity book whose **average invested share of equity is >= 50%** (or whose
+regression beta to its benchmark is >= 0.5) is treated as benchmark-relative whatever it declared, so a market
+exposure cannot be passed off as skill [convention]. Reason: an absolute t tests whether the market had a
+positive drift; buy-and-hold itself scores 2.85 on it. Testing the *excess return* instead has almost no power
+(a tracking error of 11% over ten years needs about +10.7% a year of alpha for t = 3, +7.1% for t = 2) and
+ignores beta, so the benchmark-relative test uses the regression alpha.
+
+**4c-rel regression (v3).** For each day, `(r_t - c_t) = alpha + beta * (b_t - c_t) + e_t`, where `r_t` is the
+portfolio's daily net return, `b_t` the frictionless daily return of the pre-registered benchmark (the NIFTY 50
+TRI when available, otherwise the best proxy, stated) and `c_t` the daily cash rate (the stated liquid-fund
+rate / 252). Estimate by OLS with the **Newey-West (Bartlett) HAC covariance** at the bandwidth below; the gate
+value is `alpha / SE(alpha)`. Report annualised alpha, beta, tracking error, information ratio and the
+**minimum detectable alpha** `2 * SE(alpha) * 252` and `3 * SE(alpha) * 252`: with ten years of one index only
+alphas above roughly 7% a year are detectable, so a failure means **"no detectable alpha"**, not "no alpha".
+The monthly-return regression (4c-x) is the cross-check.
+
+**How the 4c t-stat is computed (v3).** Take the portfolio's daily net return series `r_t` (equity
 change per day, after costs and slippage; flat days included, not dropped). `t = mean(r) / SE`, with
 `SE` the Newey-West / Bartlett-kernel HAC standard error of the mean, bandwidth
-`L = max( floor(4 * (T/100)^(2/9)), longest holding period in trading days )`, capped at `T/4` (T = number
-of daily observations). The Newey-West rule is the one commonly implemented as the automatic default;
-using the holding period as a floor accounts for overlapping trades. For an i.i.d.-like return series,
+**`L = floor(4 * (T/100)^(2/9))`** (T = number of daily observations; about 8 for ten years), the Newey-West
+automatic rule. **The v2 floor "longest holding period" is removed:** for a book that holds names for years it
+reached the cap (L = 616 of 2,465 days) and inflated the t (momentum 4.13 at L = 616 vs 2.67 at L = 8;
+buy-and-hold 4.59 vs 2.85), because portfolio returns have little autocorrelation. **Show the t at 2L and 4L**
+as a bandwidth-sensitivity line (information, not a gate). For an i.i.d.-like return series,
 `t` is about `annualised Sharpe x sqrt(years)`, so t >= 3.0 over the 10-year development window needs an
 annualised Sharpe of roughly 0.95, which is why the holdout (about 4.75 years) uses the single-test
 threshold 1.65 instead (about a 0.76 Sharpe over 4.75 years, so this t, not the 0.5 Sharpe floor, is the
@@ -117,7 +160,8 @@ independent (backtest-02 Donchian: 2.41 pooled, 1.35 month-clustered, 0.84 year-
 - **Parameter neighbourhood:** vary each parameter +/-20% (and +/-1 step for integers). >= 70% of
   neighbours stay net-profitable and the median neighbour Sharpe >= 70% of the chosen one. A sharp peak = overfit.
 - **Cost stress (v2, per `slippage-model.md`):** run at 1x, 2x and 3x slippage (and 2x brokerage/fees at
-  2x). **2x must keep the portfolio net-profitable with a positive daily-return t**; 3x is report-only (label
+  2x). **2x must keep the portfolio net-profitable with a positive daily-return t** (for 4c-rel books, a
+  positive alpha t, v3); 3x is report-only (label
   the strategy fragile if net return falls by more than half from 1x to 2x).
 - **Fold stability:** >= 60% of the 14 folds net-positive; worst fold max drawdown <= the kill-switch limit.
 - **Random-entry baseline:** generate 1,000 random strategies with the same number of trades, holding
