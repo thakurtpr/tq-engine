@@ -1,3 +1,4 @@
+//! Transaction costs: Indian equities (this file) and crypto spot ([`crypto`]).
 //! Indian equity transaction costs. Rates are data, not code: a fee change is a config edit.
 //!
 //! Source: docs/costs-india.md, which cites <https://zerodha.com/charges> (fetched 2026-10-30).
@@ -13,6 +14,10 @@
 //! [`CostSchedule::compute`] adds it to every delivery sell. Multiple partial sells of the same
 //! scrip on one day are therefore over-charged. The backtester closes whole positions, at most
 //! one exit per symbol per daily bar, so it is not affected today.
+
+mod crypto;
+
+pub use crypto::{CryptoSpotFees, Liquidity, Tds194S, TdsLedger};
 
 use rust_decimal::{Decimal, RoundingStrategy};
 use tq_core::Side;
