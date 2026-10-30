@@ -1,11 +1,13 @@
 //! Market data sources. Kite historical, bhavcopy and Parquet loaders implement `BarSource` later.
 
 mod csv_daily;
+mod intraday_csv;
 mod membership;
 mod quality;
 mod time;
 
 pub use csv_daily::CsvDaily;
+pub use intraday_csv::{parse_line as parse_intraday_line, IntradayCsv};
 pub use membership::{Membership, Window};
 pub use quality::{quality_report, Gap, Jump, QualityReport, GAP_THRESHOLD_DAYS, JUMP_THRESHOLD};
 pub use time::{ist_close_ts, ist_date};
