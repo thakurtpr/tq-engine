@@ -110,7 +110,8 @@ fn a_loss_in_one_symbol_trips_the_kill_switch_for_all() {
     // A: 900 sh, stop 90; close 93 marks a 6.3% drawdown. B's later entry is blocked.
     let a = vec![flat(0, dec!(100)), flat(1, dec!(100)), bar(2, dec!(99), dec!(93), dec!(93)), flat(3, dec!(93)), flat(4, dec!(93))];
     let s = Script::default().at("A", 0, enter("A", dec!(900), dec!(100), dec!(90))).at("B", 3, enter("B", dec!(10), dec!(100), dec!(95)));
-    let r = go(s, limits(5), &scripted(), &[series("A", a), series("B", flats(0, 5, dec!(100)))]);
+    let kill_at_5 = RiskLimits { max_drawdown_pct: dec!(5), ..limits(5) };
+    let r = go(s, kill_at_5, &scripted(), &[series("A", a), series("B", flats(0, 5, dec!(100)))]);
     assert_eq!(r.kill_switch_engaged_at, Some(2));
     assert_eq!(r.rejections, vec!["risk: kill switch is engaged".to_string()]);
 }

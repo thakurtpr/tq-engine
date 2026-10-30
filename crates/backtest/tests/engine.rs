@@ -211,7 +211,8 @@ fn drawdown_engages_kill_switch_which_blocks_entries_but_never_exits() {
         .at(0, enter(dec!(900), dec!(100), dec!(90)))
         .at(2, exit())
         .at(4, enter(dec!(10), dec!(95), dec!(90)));
-    let (r, _) = go(&mut s, wide(dec!(10)), &bars);
+    let limits = RiskLimits { max_drawdown_pct: dec!(5), ..wide(dec!(10)) };
+    let (r, _) = go(&mut s, limits, &bars);
     assert_eq!(r.kill_switch_engaged_at, Some(2));
     assert_eq!((r.trades.len(), r.trades[0].exit_ts), (1, 3));
     assert_eq!(r.rejections, vec!["risk: kill switch is engaged".to_string()]);
@@ -223,7 +224,8 @@ fn zero_gross_edge_loses_money_net_of_costs() {
     let bars: Vec<Bar> = (0..20).map(|ts| flat(ts, dec!(100))).collect();
     let mut s = Scripted::default();
     for ts in (0..18).step_by(2) {
-        s = s.at(ts, enter(dec!(100), dec!(100), dec!(95))).at(ts + 1, exit());
+        // risk 100 * 4 = 400, inside 0.5% of the (cost-eroded) equity.
+        s = s.at(ts, enter(dec!(100), dec!(100), dec!(96))).at(ts + 1, exit());
     }
     let (r, _) = go(&mut s, RiskLimits::default(), &bars);
     let gross: Decimal = r.trades.iter().map(|t| t.gross_pnl).sum();

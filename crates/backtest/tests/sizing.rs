@@ -68,8 +68,8 @@ fn risk_size_is_cut_to_the_notional_cap_instead_of_rejected() {
 
 #[test]
 fn entry_is_skipped_when_risk_budget_buys_zero_shares() {
-    // 500 at risk, 600 per share to the stop -> 0 shares.
-    let (r, p) = go(vec![(0, enter(dec!(1000), dec!(400)))], &risk(dec!(0.5)), &[flat(0, dec!(1000)), flat(1, dec!(1000))]);
+    // 1 share risks 400 (inside the gate's 0.5%), but a 0.25% budget is 250 < 400 -> 0 shares.
+    let (r, p) = go(vec![(0, enter(dec!(1000), dec!(600)))], &risk(dec!(0.25)), &[flat(0, dec!(1000)), flat(1, dec!(1000))]);
     assert!(p.fills().is_empty());
     assert_eq!(r.entries_sized_to_zero, 1);
 }
