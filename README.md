@@ -18,7 +18,7 @@ one rule: **every order passes a hard risk gate, and every backtest pays realist
 | `tq-indicators` | Streaming O(1) indicators. |
 | `tq-data` | Bar sources; rejects unordered or invalid data. |
 | `tq-broker` | `Paper` broker only. |
-| `tq-backtest` | Event-driven backtester; orders fill at the next bar's open (no look-ahead). |
+| `tq-backtest` | Event-driven backtester; orders fill at the next bar's open (no look-ahead). `run_portfolio` steps all symbols in ONE shared account (the headline mode); per-symbol runs are a diagnostic. Adopted slippage model, month-clustered t, CAGR/Calmar/exposure. |
 | `tq-cli` | Command-line entry point. |
 
 ## Run
@@ -26,7 +26,14 @@ one rule: **every order passes a hard risk gate, and every backtest pays realist
 ```sh
 cargo test
 cargo run -p tq-cli
+# Portfolio backtest with the adopted slippage model and the NIFTY 50 price index as benchmark;
+# writes reports/.../manifests/manifest-<sha>.csv (SHA-256 of every input CSV) and cites it:
+./target/release/tq backtest --strategy donchian --data-dir data/daily-pit \
+    --universe-file data-ref/nifty50_members_by_date.csv --aliases data-ref/nifty50_price_aliases.csv \
+    --start 2012-01-01 --end 2021-12-31 --max-positions 5 --benchmark data/index/NSEI.csv --out report.md
 ```
+
+Latest results: [reports/backtest-03.md](reports/backtest-03.md) (no demonstrated edge).
 
 ## Roadmap
 

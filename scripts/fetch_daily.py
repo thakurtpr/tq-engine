@@ -22,8 +22,11 @@ NSE_SUFFIX = ".NS"
 PRICE_DECIMALS = 2
 DEFAULT_START = "2015-01-01"
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "data" / "daily"
-# NSE tickers: letters, digits and a few symbols, e.g. M&M, BAJAJ-AUTO.
-TICKER_RE = re.compile(r"^[A-Z0-9&_-]{1,20}$")
+# NSE tickers: letters, digits and a few symbols, e.g. M&M, BAJAJ-AUTO. A leading ^ marks a
+# Yahoo index symbol (e.g. ^NSEI, the NIFTY 50 price index): fetched without the .NS suffix and
+# saved without the ^ (NSEI.csv).
+TICKER_RE = re.compile(r"^\^?[A-Z0-9&_-]{1,20}$")
+INDEX_PREFIX = "^"
 
 
 class FetchError(Exception):
@@ -73,7 +76,8 @@ def collect_tickers(args: argparse.Namespace) -> list[str]:
 def download(yf, ticker: str, start: dt.date, end: dt.date):
     # yfinance's `end` is exclusive, so ask for one extra day.
     try:
-        df = yf.Ticker(ticker + NSE_SUFFIX).history(
+        yahoo = ticker if ticker.startswith(INDEX_PREFIX) else ticker + NSE_SUFFIX
+        df = yf.Ticker(yahoo).history(
             start=start.isoformat(),
             end=(end + dt.timedelta(days=1)).isoformat(),
             interval="1d",
@@ -129,7 +133,7 @@ def write_atomic(path: Path, rows: list[str]) -> None:
 def fetch_one(yf, ticker: str, start: dt.date, end: dt.date, out: Path) -> int:
     df = download(yf, ticker, start, end)
     rows = to_rows(df.sort_index())
-    write_atomic(out / f"{ticker}.csv", rows)
+    write_atomic(out / f"{ticker.lstrip(INDEX_PREFIX)}.csv", rows)
     return len(rows)
 
 
@@ -149,7 +153,7 @@ def main(argv: list[str]) -> int:
     for t in tickers:
         try:
             n = fetch_one(yf, t, start, end, args.out)
-            print(f"{t}: {n} rows -> {args.out / (t + '.csv')}")
+            print(f"{t}: {n} rows -> {args.out / (t.lstrip(INDEX_PREFIX) + '.csv')}")
         except (FetchError, OSError) as e:
             print(f"{t}: FAILED: {e}", file=sys.stderr)
             failed.append(t)

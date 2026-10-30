@@ -105,6 +105,17 @@ total by the same multiple):
 - Compute ADV and sigma from bars strictly before the fill bar; store them with each fill for audit.
 - Record slippage and cost separately on each `Fill` so reports can show gross vs net.
 
+## Implementation status (backtest-03)
+
+Implemented in `crates/backtest/src/slippage.rs` and used by default (`--slippage-model adopted`;
+`--slippage-mult` for the 1x/2x/3x stress). Choices made while coding [convention]:
+- Above 0.05% of ADV the formula's result is floored at the 5 bps base, so a larger order never pays less.
+- The stress multiplier scales the whole figure (base or formula, including the 2x stop charge).
+- An entry with fewer than 20 prior bars (no ADV) is skipped, never sized blind. Exits are never capped.
+- Stop exits fill at `min(open, stop)` less 2x slippage, then the tick rounding.
+- Not yet implemented: the liquidity stress (ADV -50%, cap 0.5%). At Rs 10 lakh the 1% ADV cap never bound
+  in backtest-03.
+
 ## Sources and verification level
 
 - NSE pre-open session (<https://www.nseindia.com/products-services/equity-market-pre-open>): timings and
