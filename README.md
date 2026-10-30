@@ -20,6 +20,8 @@ one rule: **every order passes a hard risk gate, and every backtest pays realist
 | `tq-broker` | `Paper` broker only. |
 | `tq-backtest` | Event-driven backtester; orders fill at the next bar's open (no look-ahead). `run_portfolio` steps all symbols in ONE shared account (the headline mode); per-symbol runs are a diagnostic. Adopted slippage model, month-clustered t, CAGR/Calmar/exposure. |
 | `tq-cli` | Command-line entry point. |
+| `tq-feeds` | Bar streams: historical replay and Binance PUBLIC 1m klines (websocket, REST fallback, reconnect backfill, gap detection). No keys, no orders. |
+| `tq-live` | Intraday paper runner (`tq-live` binary): replay or live feed, same Strategy/RiskGate/Paper/costs, JSONL journal, pre-registered VWAP/ORB/momentum scalpers. |
 
 ## Run
 
@@ -31,6 +33,14 @@ cargo run -p tq-cli
 ./target/release/tq backtest --strategy donchian --data-dir data/daily-pit \
     --universe-file data-ref/nifty50_members_by_date.csv --aliases data-ref/nifty50_price_aliases.csv \
     --start 2012-01-01 --end 2021-12-31 --max-positions 5 --benchmark data/index/NSEI.csv --out report.md
+```
+
+Intraday paper trading (never places orders; see [reports/intraday-01.md](reports/intraday-01.md)):
+
+```sh
+cargo build --release -p tq-live
+caffeinate -dims ./target/release/tq-live --live binance:BTCUSDT --strategy vwap   # runs until killed
+./target/release/tq-live --replay data/intraday/BTCUSDT --strategy momentum --from 2022-01-01 --to 2024-01-01 --research
 ```
 
 Latest results: [reports/backtest-03.md](reports/backtest-03.md) (no demonstrated edge).
