@@ -24,10 +24,14 @@ pub struct Trade {
     pub exit_ts: Timestamp,
     pub exit_price: Price,
     pub qty: Qty,
+    /// P&L at the filled prices, so it is already AFTER slippage.
     pub gross_pnl: Decimal,
     pub costs: Decimal,
     pub net_pnl: Decimal,
     pub exit_reason: ExitReason,
+    /// Rupees lost to slippage on both fills versus the raw open/stop prices (>= 0).
+    /// `gross_pnl + slippage` is the move before any friction.
+    pub slippage: Decimal,
 }
 
 impl Trade {
@@ -59,11 +63,17 @@ pub struct RunReport {
     pub entries_sized_to_zero: usize,
     /// Approved entries skipped at the fill because the fill date was outside `entry_windows`.
     pub entries_outside_universe: usize,
+    /// Entries cut down to the liquidity cap (1% of 20-day ADV); see `slippage.rs`.
+    pub entries_adv_capped: usize,
     pub rejections: Vec<String>,
     /// Bar at which the drawdown limit engaged the kill switch, if it did.
     pub kill_switch_engaged_at: Option<Timestamp>,
     /// Mark-to-market equity at each bar's close.
     pub equity_curve: Vec<(Timestamp, Decimal)>,
+    /// Market value of open positions at each bar's close (same timestamps as `equity_curve`).
+    pub exposure_curve: Vec<Decimal>,
+    /// Open positions at each bar's close.
+    pub open_positions_curve: Vec<usize>,
     /// Closed trades only; a position still open at the end is in the equity curve, not here.
     pub trades: Vec<Trade>,
     pub metrics: Metrics,

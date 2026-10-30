@@ -1,9 +1,11 @@
-//! Run configuration: starting cash, position sizing, slippage and the warm-up cut-off.
+//! Run configuration: starting cash, position sizing, slippage, entry priority and warm-up.
 
 use rust_decimal::Decimal;
 use tq_core::{Price, Qty, Side, Timestamp};
 use tq_risk::size_for_risk;
 
+use crate::priority::Priority;
+use crate::slippage::{LiquidityStats, SlippageModel};
 use crate::BacktestError;
 
 const HUNDRED: Decimal = Decimal::ONE_HUNDRED;
@@ -27,8 +29,15 @@ pub enum Sizing {
 pub struct RunConfig {
     pub initial_cash: Decimal,
     pub sizing: Sizing,
-    /// Adverse slippage per side: buys fill this many bps above, sells below, the raw price.
+    /// Base adverse slippage per side: buys fill this many bps above, sells below, the raw price.
     pub slippage_bps: Decimal,
+    /// The liquidity-aware model of `docs/slippage-model.md` (impact, stop 2x, ADV cap, tick).
+    /// `None`: flat `slippage_bps` on every fill (scenario tests and reproducing old reports).
+    pub slippage_model: Option<SlippageModel>,
+    /// Stress multiplier on the whole slippage (1, 2 or 3 in the protocol's cost stress).
+    pub slippage_mult: Decimal,
+    /// Order in which one day's entry signals compete for slots and cash.
+    pub priority: Priority,
     /// Bars before this timestamp only warm up the strategy: no orders, no equity points.
     pub trade_from: Timestamp,
     /// Half-open `[from, to)` timestamp windows in which an entry may FILL (e.g. index membership).
@@ -43,6 +52,9 @@ impl RunConfig {
             initial_cash,
             sizing: Sizing::RiskPct(DEFAULT_RISK_PCT),
             slippage_bps: DEFAULT_SLIPPAGE_BPS,
+            slippage_model: None,
+            slippage_mult: Decimal::ONE,
+            priority: Priority::Alphabetical,
             trade_from: Timestamp::MIN,
             entry_windows: None,
         }
@@ -58,21 +70,30 @@ impl RunConfig {
         if self.slippage_bps < Decimal::ZERO {
             return Err(BacktestError::InvalidConfig("slippage must not be negative"));
         }
+        if self.slippage_mult <= Decimal::ZERO {
+            return Err(BacktestError::InvalidConfig("slippage multiplier must be positive"));
+        }
         Ok(())
     }
 
-    /// Whether an entry may fill at `ts`.
-    pub(crate) fn entry_allowed(&self, ts: Timestamp) -> bool {
-        self.entry_windows.as_ref().is_none_or(|w| w.iter().any(|&(from, to)| from <= ts && ts < to))
+    /// `raw` moved against the trader: base bps (or the impact model for large orders, 2x for
+    /// stop exits), times the stress multiplier, then rounded to the tick under the model.
+    pub(crate) fn fill_price(&self, raw: Price, side: Side, qty: Qty, liq: &LiquidityStats, stop_exit: bool) -> Price {
+        let bps = match &self.slippage_model {
+            Some(m) => m.bps(self.slippage_bps, qty, liq, stop_exit),
+            None => self.slippage_bps,
+        };
+        let frac = bps * self.slippage_mult / BPS_PER_UNIT;
+        let price = match side {
+            Side::Buy => raw * (Decimal::ONE + frac),
+            Side::Sell => raw * (Decimal::ONE - frac),
+        };
+        self.slippage_model.as_ref().map_or(price, |m| m.round_to_tick(price, side))
     }
 
-    /// `price` moved against the trader by the slippage.
-    pub(crate) fn slipped(&self, price: Price, side: Side) -> Price {
-        let frac = self.slippage_bps / BPS_PER_UNIT;
-        match side {
-            Side::Buy => price * (Decimal::ONE + frac),
-            Side::Sell => price * (Decimal::ONE - frac),
-        }
+    /// Largest entry the liquidity cap allows; `None` without a model (no cap).
+    pub(crate) fn adv_cap(&self, liq: &LiquidityStats) -> Option<Qty> {
+        self.slippage_model.as_ref().map(|m| m.adv_cap(liq))
     }
 }
 
@@ -102,5 +123,32 @@ mod tests {
         assert_eq!(risk_sized_qty(dec!(100000), dec!(0.5), dec!(100), dec!(95), dec!(20)), dec!(100));
         assert_eq!(risk_sized_qty(dec!(100000), dec!(0.5), dec!(100), dec!(99.9), dec!(20)), dec!(200));
         assert_eq!(risk_sized_qty(dec!(100000), dec!(0.5), dec!(0), dec!(-1), dec!(20)), dec!(0));
+    }
+
+    fn liq(adv: Decimal, sigma: f64) -> LiquidityStats {
+        LiquidityStats { adv: Some(adv), sigma: Some(sigma) }
+    }
+
+    #[test]
+    fn flat_fill_price_scales_with_the_multiplier_and_skips_ticks() {
+        let c = RunConfig { slippage_mult: dec!(3), ..RunConfig::new(dec!(1)) };
+        assert_eq!(c.fill_price(dec!(100), Side::Buy, dec!(1), &liq(dec!(1), 0.5), true), dec!(100.15));
+        assert_eq!(c.adv_cap(&liq(dec!(1000), 0.01)), None);
+    }
+
+    #[test]
+    fn model_fill_price_doubles_on_stops_and_rounds_against_the_trader() {
+        let c = RunConfig { slippage_model: Some(SlippageModel::default()), ..RunConfig::new(dec!(1)) };
+        let l = liq(dec!(1000000), 0.015);
+        // 5 bps on 1001 = 1001.5005 -> tick up to 1001.55; a stop sell pays 10 bps: 999.999 -> 999.95.
+        assert_eq!(c.fill_price(dec!(1001), Side::Buy, dec!(10), &l, false), dec!(1001.55));
+        assert_eq!(c.fill_price(dec!(1001), Side::Sell, dec!(10), &l, true), dec!(999.95));
+        assert_eq!(c.adv_cap(&l), Some(dec!(10000)));
+    }
+
+    #[test]
+    fn rejects_non_positive_multiplier() {
+        let c = RunConfig { slippage_mult: dec!(0), ..RunConfig::new(dec!(1)) };
+        assert!(c.validate().is_err());
     }
 }

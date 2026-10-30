@@ -42,7 +42,7 @@ pub fn compute(initial: Decimal, curve: &[(Timestamp, Decimal)], trades: &[Trade
     }
 }
 
-fn max_drawdown_pct(equity: &[Decimal]) -> Decimal {
+pub(crate) fn max_drawdown_pct(equity: &[Decimal]) -> Decimal {
     let mut peak = Decimal::ZERO;
     let mut worst = Decimal::ZERO;
     for &e in equity {
@@ -118,6 +118,7 @@ mod tests {
             costs: dec!(0),
             net_pnl: net,
             exit_reason: ExitReason::Signal,
+            slippage: dec!(0),
         }
     }
 
