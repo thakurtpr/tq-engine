@@ -50,3 +50,32 @@ the losers. A backtest on today's constituents therefore looks better than it wo
 done in real time. Treat results from this data as an upper bound. The fix is to use
 point-in-time index constituents (e.g. NIFTY 500 membership as of each rebalance date) and
 include delisted names. Plan for this before trusting any portfolio-level result.
+
+## fetch_binance_klines.py (crypto 1-minute bars)
+
+Public Binance archive at <https://data.binance.vision> (no account, no keys). Downloads monthly spot
+1m kline zips with their `.CHECKSUM` files, verifies SHA-256, and extracts to
+`engine/data/intraday/<SYMBOL>/<SYMBOL>-1m-YYYY-MM.csv`. Standard library only; re-runs skip months already present.
+
+```sh
+python3 scripts/fetch_binance_klines.py                       # BTCUSDT ETHUSDT, 2022-01..2025-12 (~600 MB)
+python3 scripts/fetch_binance_klines.py SOLUSDT --start 2023-01 --end 2023-12
+```
+
+Rows are headerless (`open_time,open,high,low,close,volume,close_time,...`). **From 2025-01 Binance
+stamps spot archives in microseconds**; `tq_data::IntradayCsv` converts to ms. 2024-2025 is the
+pre-registered holdout for the intraday strategies: `tq-live --replay` refuses to read it.
+
+## fetch_nse_intraday.py (NSE 5m and 1m bars, very short history)
+
+```sh
+.venv/bin/python scripts/fetch_nse_intraday.py                 # RELIANCE HDFCBANK ICICIBANK INFY TCS
+```
+
+Writes `engine/data/intraday-nse/<5m|1m>/<SYMBOL>.csv` (`ts_ms,open,high,low,close,volume`, bar open
+in UTC ms, unadjusted). **Yahoo serves only the last 60 days of 5m bars (about 58 sessions, 4,380 bars
+per stock on 2026-10-30) and the last ~30 days of 1m bars (about 20 sessions, 6,850 bars).** That is
+one market regime and a few dozen trades per strategy: enough to exercise the code, nowhere near enough
+to validate an edge. Proper NSE intraday history needs a paid source (e.g. Kite Connect historical,
+Rs 500/month; see `docs/intraday-costs-and-access.md`), or recording live bars over months. Yahoo also
+emits a post-close 15:30+ print; the runner ignores bars outside 09:15-15:30 IST.
