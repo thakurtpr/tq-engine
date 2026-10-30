@@ -17,7 +17,7 @@ mod trade;
 
 pub use trade::{ExitReason, TradeRecord};
 
-use std::time::Instant;
+use std::time::SystemTime;
 
 use rust_decimal::Decimal;
 use serde_json::json;
@@ -310,11 +310,12 @@ fn now_ms() -> Timestamp {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
-/// Drives `runner` from `feed` until the feed ends or `deadline` passes.
-pub fn run<S: Strategy, F: BarStream>(runner: &mut Runner<S>, feed: &mut F, deadline: Option<Instant>) -> Result<(), LiveError> {
+/// Drives `runner` from `feed` until the feed ends or the wall-clock `deadline` passes. Wall
+/// clock, not `Instant`: on macOS `Instant` stops while the machine sleeps.
+pub fn run<S: Strategy, F: BarStream>(runner: &mut Runner<S>, feed: &mut F, deadline: Option<SystemTime>) -> Result<(), LiveError> {
     while let Some(ev) = feed.next_event()? {
         runner.on_event(ev)?;
-        if deadline.is_some_and(|d| Instant::now() >= d) {
+        if deadline.is_some_and(|d| SystemTime::now() >= d) {
             break;
         }
     }

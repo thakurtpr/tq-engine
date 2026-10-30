@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use chrono::NaiveDate;
 use clap::Parser;
@@ -179,7 +179,7 @@ fn execute<S: Strategy>(strategy: S, mode: Mode, cfg: RunnerConfig, mut journal:
     match mode {
         Mode::Replay(mut feed) => run(&mut runner, &mut feed, None)?,
         Mode::Live(lc) => {
-            let deadline = minutes.map(|m| Instant::now() + Duration::from_secs(m * 60));
+            let deadline = minutes.map(|m| SystemTime::now() + Duration::from_secs(m * 60));
             let mut feed = BinanceLive::new(lc, TungsteniteWs, UreqRest::default(), SystemClock);
             run(&mut runner, &mut feed, deadline)?;
         }
