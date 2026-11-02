@@ -34,19 +34,29 @@ impl Market {
         }
     }
 
-    pub fn stream_url(self, symbols: &[String]) -> String {
-        let base = match self {
-            Market::Spot => "wss://stream.binance.com:9443",
-            Market::Um => "wss://fstream.binance.com",
+    /// One websocket per entry: (url, the stream names it must deliver).
+    /// WHY: USD-M split its routes (Binance WebSocket change notice, 2026): depth and bookTicker are
+    /// served on `/public`, aggTrade on `/market`; the legacy `/stream` path kept serving depth and
+    /// bookTicker but silently delivered zero aggTrades (found in the 2026-11-02 recording).
+    pub fn connections(self, symbols: &[String]) -> Vec<(String, Vec<String>)> {
+        let names = |kinds: &[&str]| -> Vec<String> {
+            symbols.iter().flat_map(|s| kinds.iter().map(move |k| format!("{}@{k}", s.to_ascii_lowercase()))).collect()
         };
-        let streams: Vec<String> = symbols
-            .iter()
-            .flat_map(|s| {
-                let s = s.to_ascii_lowercase();
-                [format!("{s}@depth@100ms"), format!("{s}@aggTrade"), format!("{s}@bookTicker")]
-            })
-            .collect();
-        format!("{base}/stream?streams={}", streams.join("/"))
+        let url = |base: &str, streams: &[String]| format!("{base}?streams={}", streams.join("/"));
+        match self {
+            Market::Spot => {
+                let all = names(&["depth@100ms", "aggTrade", "bookTicker"]);
+                vec![(url("wss://stream.binance.com:9443/stream", &all), all)]
+            }
+            Market::Um => {
+                let public = names(&["depth@100ms", "bookTicker"]);
+                let market = names(&["aggTrade"]);
+                vec![
+                    (url("wss://fstream.binance.com/public/stream", &public), public),
+                    (url("wss://fstream.binance.com/market/stream", &market), market),
+                ]
+            }
+        }
     }
 
     /// Public depth snapshot; spot weight 50, USD-M weight 20 at limit 1000.
@@ -74,6 +84,12 @@ pub fn parse_symbol(raw: &str) -> Result<String, String> {
     } else {
         Err(format!("invalid Binance symbol {raw:?}"))
     }
+}
+
+/// The `stream` name of a combined-stream message (`{"stream":"btcusdt@aggTrade","data":...}`).
+pub fn stream_name(raw: &str) -> Option<&str> {
+    let rest = raw.strip_prefix("{\"stream\":\"")?;
+    rest.split_once('"').map(|(name, _)| name)
 }
 
 pub fn msg_line(rx_ms: i64, raw: &str) -> String {
@@ -181,13 +197,22 @@ mod tests {
     }
 
     #[test]
-    fn stream_url_subscribes_depth_trades_and_top_of_book_per_symbol() {
-        let url = Market::Um.stream_url(&["BTCUSDT".into(), "ETHUSDT".into()]);
+    fn usd_m_splits_book_streams_and_trades_across_public_and_market_routes() {
+        let conns = Market::Um.connections(&["BTCUSDT".into(), "ETHUSDT".into()]);
         assert_eq!(
-            url,
-            "wss://fstream.binance.com/stream?streams=btcusdt@depth@100ms/btcusdt@aggTrade/btcusdt@bookTicker/\
-             ethusdt@depth@100ms/ethusdt@aggTrade/ethusdt@bookTicker"
+            conns[0].0,
+            "wss://fstream.binance.com/public/stream?streams=btcusdt@depth@100ms/btcusdt@bookTicker/\
+             ethusdt@depth@100ms/ethusdt@bookTicker"
         );
+        assert_eq!(conns[1].0, "wss://fstream.binance.com/market/stream?streams=btcusdt@aggTrade/ethusdt@aggTrade");
+        assert_eq!(conns[1].1, ["btcusdt@aggTrade", "ethusdt@aggTrade"]);
+        assert_eq!(Market::Spot.connections(&["BTCUSDT".into()]).len(), 1);
+    }
+
+    #[test]
+    fn reads_stream_name_from_combined_message() {
+        assert_eq!(stream_name(r#"{"stream":"btcusdt@aggTrade","data":{}}"#), Some("btcusdt@aggTrade"));
+        assert_eq!(stream_name(r#"{"result":null,"id":1}"#), None);
     }
 
     #[test]
