@@ -1048,6 +1048,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tq-l2rec"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "flate2",
+ "tq-feeds",
+ "ureq",
+]
+
+[[package]]
 name = "tq-live"
 version = "0.1.0"
 dependencies = [

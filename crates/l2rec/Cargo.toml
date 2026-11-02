@@ -1,0 +1,18 @@
+[package]
+name = "tq-l2rec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Records Binance PUBLIC order-book diffs, trades and top-of-book to hourly gzip JSONL. No keys, no orders."
+
+[[bin]]
+name = "tq-l2rec"
+path = "src/main.rs"
+
+[dependencies]
+tq-feeds = { path = "../feeds" }
+ureq = "2.10"
+# WHY: already in Cargo.lock via ureq; used directly here so a day of BTC/ETH L2 fits in ~hundreds of MB.
+flate2 = "1.1"
+clap = { version = "4.5", features = ["derive"] }
+chrono = { version = "0.4.38", default-features = false, features = ["std"] }

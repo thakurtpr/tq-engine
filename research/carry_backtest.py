@@ -74,6 +74,7 @@ class Run:
     daily: pd.Series        # daily equity, UTC day close
     funding: pd.Series      # funding cash received per hour
     spot_pnl: pd.Series     # spot price PnL per hour
+    perp_pnl: pd.Series     # short perp price PnL per hour
     spot_sells: pd.Series   # spot sell proceeds per hour (TDS base)
     rebalances: int
     liquidated: pd.Timestamp | None
@@ -84,7 +85,10 @@ def simulate(spot: pd.DataFrame, perp: pd.DataFrame, mark: pd.DataFrame, rates: 
     s_open, s_close = spot.open.reindex(idx).values, spot.close.reindex(idx).values
     p_open, p_close = perp.open.reindex(idx).values, perp.close.reindex(idx).values
     m_open, m_high = mark.open.reindex(idx).values, mark.high.reindex(idx).values
-    rate = rates.reindex(idx).fillna(0.0).values
+    # WHY: ~20 hours a symbol are missing from one of the kline files; a payment in such an hour is
+    # accrued at the next simulated hour instead of being dropped (review-carry-01 item 3).
+    slot = np.minimum(idx.searchsorted(rates.index), len(idx) - 1)
+    rate = np.bincount(slot, weights=rates.values, minlength=len(idx))
     n_frac = 1.0 / (1.0 + m)
     leg_cost = lambda dq, s, p: dq * s * (SPOT_FEE + SLIPPAGE) + dq * p * (PERP_FEE + SLIPPAGE)
 
@@ -93,9 +97,9 @@ def simulate(spot: pd.DataFrame, perp: pd.DataFrame, mark: pd.DataFrame, rates: 
     cash_spot = 0.0
     perp_cash = equity0 * (1 - n_frac) - leg_cost(q, s_open[0], p_open[0])
     entry_p = p_open[0]
-    fund, spnl, sells, eq = (np.zeros(len(idx)) for _ in range(4))
+    fund, spnl, ppnl, sells, eq = (np.zeros(len(idx)) for _ in range(5))
     rebalances, liquidated = 0, None
-    prev_s = s_open[0]
+    prev_s, prev_p = s_open[0], p_open[0]
     for i in range(len(idx)):
         fund[i] = q * m_open[i] * rate[i]
         perp_cash += fund[i]
@@ -104,7 +108,8 @@ def simulate(spot: pd.DataFrame, perp: pd.DataFrame, mark: pd.DataFrame, rates: 
             eq[i:] = np.nan
             break
         spnl[i] = q * (s_close[i] - prev_s)
-        prev_s = s_close[i]
+        ppnl[i] = q * (prev_p - p_close[i])
+        prev_s, prev_p = s_close[i], p_close[i]
         perp_eq = perp_cash + q * (entry_p - p_close[i])
         total = q * s_close[i] + cash_spot + perp_eq
         ratio = perp_eq / (q * p_close[i])
@@ -124,7 +129,8 @@ def simulate(spot: pd.DataFrame, perp: pd.DataFrame, mark: pd.DataFrame, rates: 
         eq[-1] -= exit_cost
         sells[-1] += q * s_close[-1]
     ser = lambda a: pd.Series(a, index=idx)
-    return Run(ser(eq).resample("D").last().dropna(), ser(fund), ser(spnl), ser(sells), rebalances, liquidated)
+    return Run(ser(eq).resample("D").last().dropna(), ser(fund), ser(spnl), ser(ppnl), ser(sells),
+               rebalances, liquidated)
 
 
 def hac_t(r: np.ndarray) -> float:
@@ -159,12 +165,15 @@ def yearly(run: Run) -> pd.DataFrame:
     eq = run.daily
     end = eq.groupby(eq.index.year).last()
     start = end.shift(1).fillna(1.0)
-    fy, sy = (x.groupby(x.index.year).sum() for x in (run.funding, run.spot_pnl))
+    fy, sy, py = (x.groupby(x.index.year).sum() for x in (run.funding, run.spot_pnl, run.perp_pnl))
     tds = run.spot_sells.groupby(run.spot_sells.index.year).sum() * TDS_RATE * HURDLE
     pnl = end - start
     tax_b = TAX_RATE * (fy.clip(lower=0) + sy.clip(lower=0))
+    # b2: every leg is its own 115BBH head, so a down year's short-perp gain is taxed too (review item 6).
+    tax_b2 = tax_b + TAX_RATE * py.clip(lower=0)
     out = pd.DataFrame({"pretax": pnl / start, "funding": fy / start, "spot_gain": sy / start,
-                        "tax_b": (pnl - tax_b) / start, "tds_c": (pnl - tds) / start})
+                        "tax_b": (pnl - tax_b) / start, "tax_b2": (pnl - tax_b2) / start,
+                        "tds_c": (pnl - tds) / start})
     return out.reindex(end.index)
 
 
@@ -181,16 +190,17 @@ def report(sym: str, m: float, run: Run, rates: pd.Series) -> list[str]:
              f"- in-sample {ann(r_is):+.2%}/yr, out-of-sample {ann(r_oos):+.2%}/yr "
              f"(OOS/IS {ann(r_oos) / ann(r_is):.2f})",
              f"- funding positive in {(last12 > 0).mean():.0%} of last-12-month intervals",
-             "", "| year | pre-tax | funding | spot gain | tax (b) | TDS (c) |", "|---|---|---|---|---|---|"]
+             "", "| year | pre-tax | funding | spot gain | tax (b) | tax (b2) | TDS (c) |",
+             "|---|---|---|---|---|---|---|"]
     lines += [f"| {yr} | {row.pretax:+.2%} | {row.funding:+.2%} | {row.spot_gain:+.2%} | "
-              f"{row.tax_b:+.2%} | {row.tds_c:+.2%} |" for yr, row in y.iterrows()]
+              f"{row.tax_b:+.2%} | {row.tax_b2:+.2%} | {row.tds_c:+.2%} |" for yr, row in y.iterrows()]
     kills = []
     if ann(r_oos) < HURDLE or ann(r_oos) < 0.5 * ann(r_is):
         kills.append("1 OOS below hurdle or <50% of IS")
     if hac_t(r.values) < 2:
         kills.append("2 HAC t < 2")
-    if any(y.tax_b.get(yr, 0) < 0 for yr in (2021, 2024)):
-        kills.append("3 tax case (b) negative in 2021 or 2024")
+    if any(y.tax_b.get(yr, 0) < 0 or y.tax_b2.get(yr, 0) < 0 for yr in (2021, 2024)):
+        kills.append("3 tax case (b/b2) negative in 2021 or 2024")
     if run.liquidated is not None or max_dd(run.daily) < -0.05:
         kills.append("4 liquidation or DD > 5%")
     if (last12 > 0).mean() < 0.70:
