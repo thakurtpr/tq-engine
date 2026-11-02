@@ -4,9 +4,12 @@
 //! strings, so book levels compare exactly (no float keys).
 
 pub mod book;
+pub mod drive;
 pub mod gate1;
 pub mod reader;
 pub mod record;
+pub mod sim;
+pub mod stats;
 pub mod sync;
 
 /// Fixed-point scale: 1.0 == 100_000_000.

@@ -9,6 +9,10 @@ description = "Offline market-making research on tq-l2rec recordings: book rebui
 name = "tq-mm-gate1"
 path = "src/bin/gate1.rs"
 
+[[bin]]
+name = "tq-mm-sim"
+path = "src/bin/sim.rs"
+
 [dependencies]
 serde_json = "1"
 flate2 = "1.1"

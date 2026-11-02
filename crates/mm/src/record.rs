@@ -13,8 +13,22 @@ pub enum Record {
     Ticker { sym: String, update: u64, bid: i64, bid_qty: i64, ask: i64, ask_qty: i64 },
     Snapshot { sym: String, last_update: u64, bids: Levels, asks: Levels },
     ServerTime { tx: i64, server: i64 },
-    Link { event: String },
+    /// `info` carries the URL for connect/disconnect, so a trade-socket gap is told from a book gap.
+    Link { event: String, info: String },
     Other,
+}
+
+impl Record {
+    /// Connect/disconnect/stop of the socket carrying depth (anything but the USD-M `/market` route).
+    pub fn is_book_link(&self) -> bool {
+        matches!(self, Record::Link { event, info }
+            if matches!(event.as_str(), "connect" | "disconnect" | "stop") && !info.contains("/market/"))
+    }
+
+    /// Connect/disconnect of the trade-only `/market` route: trades may be missing, the book is intact.
+    pub fn is_trade_link(&self) -> bool {
+        matches!(self, Record::Link { event, info } if matches!(event.as_str(), "connect" | "disconnect") && info.contains("/market/"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,7 +102,8 @@ pub fn parse_line(text: &str) -> Option<Line> {
     } else if let Some(st) = v.get("servertime") {
         Record::ServerTime { tx: num(&v, "tx")?, server: num(st, "serverTime")? }
     } else if let Some(ev) = v.get("event").and_then(Value::as_str) {
-        Record::Link { event: ev.to_string() }
+        let info = v.get("info").and_then(Value::as_str).unwrap_or("").to_string();
+        Record::Link { event: ev.to_string(), info }
     } else {
         v.get("m").and_then(|m| m.get("data")).and_then(stream).unwrap_or(Record::Other)
     };

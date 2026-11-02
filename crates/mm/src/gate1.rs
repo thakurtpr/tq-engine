@@ -222,13 +222,13 @@ impl Gate1 {
             }
             Record::Ticker { sym, update, bid, ask, .. } => self.syms.entry(sym).or_default().ticker(update, bid, ask),
             Record::ServerTime { tx, server } => self.probes.push((rx, server - (tx + rx) / 2, rx - tx)),
-            Record::Link { event } => {
-                if event == "connect" {
-                    self.connects += 1;
-                }
-                // A new connection (or a stop) cannot be chained to the old book.
-                if matches!(event.as_str(), "connect" | "disconnect" | "stop") {
-                    self.disconnects += u64::from(event == "disconnect");
+            rec @ Record::Link { .. } => {
+                let Record::Link { event, .. } = &rec else { unreachable!() };
+                self.connects += u64::from(event == "connect");
+                self.disconnects += u64::from(event == "disconnect");
+                // A new depth connection (or a stop) cannot be chained to the old book; the
+                // trade-only /market socket does not touch the book.
+                if rec.is_book_link() {
                     self.syms.values_mut().for_each(SymStats::reset_link);
                 }
             }
