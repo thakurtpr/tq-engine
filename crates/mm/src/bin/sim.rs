@@ -73,10 +73,16 @@ fn run(args: Args) -> Result<(), String> {
     })
     .map_err(|e| format!("read failed: {e}"))?;
     let (runs, c) = driver.finish();
+    let inversions: u64 = c.order_violations.iter().sum();
+    let gate = if inversions == 0 {
+        String::new()
+    } else {
+        format!("\n**SAMPLE NOT TRUSTED:** {inversions} events left the reorder window out of exchange-time order; raise REORDER_MS and rerun.\n")
+    };
     let text = format!(
         "# MM simulation: {}\n\n- files {}; lines {}; unparsable {}; truncated tails {}\n- window: skip {} h, length {}\n\
          - released {}; exchange-time order violations (depth / snapshot+link / trade) {:?}, worst {} ms; \
-         trades while unsynced {}; book resets {}; trade-socket gaps {}\n\n{}\n",
+         trades while unsynced {}; book resets {}; trade-socket gaps {}\n{gate}\n{}\n",
         args.dir.display(),
         stats.files,
         stats.lines,
@@ -95,6 +101,9 @@ fn run(args: Args) -> Result<(), String> {
     print!("{text}");
     if let Some(out) = &args.out {
         std::fs::write(out, &text).map_err(|e| format!("cannot write {}: {e}", out.display()))?;
+    }
+    if inversions > 0 {
+        return Err("exchange-time order inversions: sample not trusted".into());
     }
     Ok(())
 }

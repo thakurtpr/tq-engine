@@ -15,7 +15,8 @@ use crate::sync::{DepthEv, DepthOutcome, SymbolSync};
 /// Events are released once the newest arrival is this far past them.
 /// WHY: median feed delay is ~50-150 ms, but this retail link delivers bursts 2-14 s late (first
 /// dev-slice hour: worst 13.6 s), and a 2 s window released 264 events out of exchange-time order.
-const REORDER_MS: i64 = 20_000;
+/// 60 s per review-sim-20 (cost is memory only); any inversion still marks the sample untrusted.
+const REORDER_MS: i64 = 60_000;
 const PROBE_MAX_AGE_MS: i64 = 20 * 60_000;
 
 struct SymbolRun {

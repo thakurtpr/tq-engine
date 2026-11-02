@@ -116,14 +116,47 @@ fn fmt_opt(x: Option<f64>) -> String {
     x.map_or("n/a".into(), |v| format!("{v:+.2}"))
 }
 
+/// A kill rule over a set of cells. It fires only when every cell is evaluable and dead.
+/// WHY (review-sim-20): treating a cell with no fills as dead turned a stalled trade stream into a
+/// spurious kill.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Kill {
+    pub cells: usize,
+    pub evaluable: usize,
+    pub dead: usize,
+}
+
+impl Kill {
+    fn add(&mut self, dead: Option<bool>) {
+        self.cells += 1;
+        if let Some(d) = dead {
+            self.evaluable += 1;
+            self.dead += usize::from(d);
+        }
+    }
+
+    pub fn verdict(&self) -> String {
+        if self.cells == 0 || self.evaluable < self.cells {
+            format!("not evaluable ({} of {} cells have no data)", self.cells - self.evaluable, self.cells)
+        } else if self.dead == self.cells {
+            "**fires**".into()
+        } else {
+            format!("does not fire ({} of {} cells dead)", self.dead, self.cells)
+        }
+    }
+}
+
 /// One row per simulation (headline fee row), then fee rows and kill checks.
 pub fn report(runs: &BTreeMap<String, Vec<Sim>>) -> String {
     let mut o = vec![
+        "Net bps = (gross mark-to-mid P&L - maker fee x maker notional - taker fee x taker notional) / maker (filled) notional; \
+         intervals are 1-hour block bootstraps over the `hours` column."
+            .to_string(),
+        String::new(),
         "| symbol | cell | queue | L ms | hours | fills | trade-through | quotes cancelled unfilled | flattens | markout 1 s / 10 s / 60 s (bps) | net bps, regular fee (95%, adj 99.4%) |".to_string(),
         "|---|---|---|---|---|---|---|---|---|---|---|".to_string(),
     ];
-    let mut k2_all_dead = true;
-    let mut k3_all_below = true;
+    let (mut k2, mut k3) = (Kill::default(), Kill::default());
     let mut fee_rows = vec![];
     for (sym, sims) in runs {
         for s in sims {
@@ -144,12 +177,12 @@ pub fn report(runs: &BTreeMap<String, Vec<Sim>>) -> String {
                 fmt_ci(&m.net[0])
             ));
             if s.p.queue == Queue::Optimistic && s.p.latency_ms == 50 {
-                k2_all_dead &= m.net[0].as_ref().is_none_or(|n| n.2[1] <= 0.0);
+                k2.add(m.net[0].as_ref().map(|n| n.2[1] <= 0.0));
             }
             if s.p.queue == Queue::Conservative && s.p.latency_ms == 100 {
-                k3_all_below &= m.markout10.as_ref().is_none_or(|x| x.2[1] < HEADLINE_MAKER_BPS);
+                k3.add(m.markout10.as_ref().map(|x| x.2[1] < HEADLINE_MAKER_BPS));
                 let rows: Vec<String> = FEE_ROWS.iter().zip(&m.net).map(|(r, n)| format!("{}: {}", r.0, fmt_ci(n))).collect();
-                fee_rows.push(format!("- {sym} {:?}: {}", s.p.cell, rows.join("; ")));
+                fee_rows.push(format!("- {sym} {:?} ({} blocks): {}", s.p.cell, m.hours, rows.join("; ")));
             }
         }
     }
@@ -167,11 +200,11 @@ pub fn report(runs: &BTreeMap<String, Vec<Sim>>) -> String {
     }
     o.push(format!(
         "- K2 (optimistic queue, L = 50 ms, regular fee: adj upper bound <= 0 in every cell on both symbols): {}",
-        if k2_all_dead { "**fires**" } else { "does not fire" }
+        k2.verdict()
     ));
     o.push(format!(
         "- K3 (conservative, L = 100 ms: adj upper bound of mean 10 s markout < 2.0 bps in every cell): {}",
-        if k3_all_below { "**fires**" } else { "does not fire" }
+        k3.verdict()
     ));
     o.join("\n")
 }
@@ -186,6 +219,35 @@ mod tests {
         let (p, ci, adj) = ratio_ci(&pairs).unwrap();
         assert!((p - 1.0).abs() < 1e-12);
         assert!(adj[0] <= ci[0] && ci[0] <= p && p <= ci[1] && ci[1] <= adj[1]);
+    }
+
+    #[test]
+    fn kills_with_a_cell_lacking_data_are_not_evaluable_rather_than_fired() {
+        let mut k = Kill::default();
+        k.add(Some(true));
+        k.add(None);
+        assert!(k.verdict().starts_with("not evaluable"));
+        k = Kill::default();
+        k.add(Some(true));
+        k.add(Some(true));
+        assert_eq!(k.verdict(), "**fires**");
+        k.add(Some(false));
+        assert!(k.verdict().starts_with("does not fire"));
+        assert!(Kill::default().verdict().starts_with("not evaluable"));
+    }
+
+    #[test]
+    fn report_on_a_run_with_no_fills_never_fires_a_kill() {
+        use crate::sim::{Cell, Params};
+        let mut runs = BTreeMap::new();
+        let sims = [Queue::Conservative, Queue::Optimistic]
+            .into_iter()
+            .flat_map(|queue| [50, 100].map(|latency_ms| Sim::new(Params { cell: Cell::S0, queue, latency_ms, q: 1 })))
+            .collect();
+        runs.insert("BTCUSDT".to_string(), sims);
+        let r = report(&runs);
+        assert!(!r.contains("**fires**"), "{r}");
+        assert!(r.contains("not evaluable"));
     }
 
     #[test]
