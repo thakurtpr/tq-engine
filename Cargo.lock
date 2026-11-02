@@ -1080,6 +1080,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tq-mm"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "flate2",
+ "serde_json",
+]
+
+[[package]]
 name = "tq-risk"
 version = "0.1.0"
 dependencies = [
