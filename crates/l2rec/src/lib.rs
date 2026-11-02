@@ -5,6 +5,7 @@
 //! every diff whose update ids follow it. Each line is one JSON object:
 //!   `{"rx":<local ms>,"m":<raw stream message>}`                 websocket message
 //!   `{"rx":<local ms>,"snap":"BTCUSDT","m":<raw REST depth body>}` REST snapshot
+//!   `{"rx":<local ms>,"tx":<local ms>,"servertime":{"serverTime":<ms>}}` clock-offset probe
 //!   `{"rx":<local ms>,"event":"connect"|"disconnect","info":"..."}` link state, so gaps are explicit
 //! Files rotate per UTC hour: `<out>/<market>/<YYYY-MM-DDTHH>.jsonl.gz`.
 
@@ -55,6 +56,14 @@ impl Market {
             Market::Um => format!("https://fapi.binance.com/fapi/v1/depth?symbol={symbol}&limit=1000"),
         }
     }
+
+    /// Public server time (weight 1), logged with send and receive times to estimate clock offset.
+    pub fn time_url(self) -> &'static str {
+        match self {
+            Market::Spot => "https://api.binance.com/api/v3/time",
+            Market::Um => "https://fapi.binance.com/fapi/v1/time",
+        }
+    }
 }
 
 /// Upper-case alphanumeric Binance symbol, or an error naming the bad input.
@@ -73,6 +82,11 @@ pub fn msg_line(rx_ms: i64, raw: &str) -> String {
 
 pub fn snap_line(rx_ms: i64, symbol: &str, raw: &str) -> String {
     format!("{{\"rx\":{rx_ms},\"snap\":\"{symbol}\",\"m\":{raw}}}")
+}
+
+/// Offset estimate: server time minus the midpoint of `tx_ms` and `rx_ms`.
+pub fn time_line(tx_ms: i64, rx_ms: i64, raw: &str) -> String {
+    format!("{{\"rx\":{rx_ms},\"tx\":{tx_ms},\"servertime\":{raw}}}")
 }
 
 pub fn event_line(rx_ms: i64, event: &str, info: &str) -> String {

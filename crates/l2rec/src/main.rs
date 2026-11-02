@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, ValueEnum};
 use tq_feeds::binance::{TungsteniteWs, WsConnector};
-use tq_l2rec::{event_line, msg_line, parse_symbol, snap_line, HourlyWriter, Market};
+use tq_l2rec::{event_line, msg_line, parse_symbol, snap_line, time_line, HourlyWriter, Market};
 
 const SNAPSHOT_EVERY: Duration = Duration::from_secs(600);
 const FLUSH_EVERY: Duration = Duration::from_secs(5);
@@ -37,7 +37,7 @@ struct Args {
     #[arg(long)]
     minutes: Option<u64>,
     /// Stop when the market's output directory reaches this size.
-    #[arg(long, default_value_t = 20_000)]
+    #[arg(long, default_value_t = 35_000)]
     max_mb: u64,
 }
 
@@ -66,7 +66,20 @@ impl Recorder {
         self.writer.write(ts, &event_line(ts, event, info)).map_err(|e| format!("write failed: {e}"))
     }
 
+    fn server_time(&mut self) -> Result<(), String> {
+        let tx = now_ms();
+        match self.rest.get(self.market.time_url()).call() {
+            Ok(resp) => {
+                let body = resp.into_string().map_err(|e| e.to_string())?;
+                let rx = now_ms();
+                self.writer.write(rx, &time_line(tx, rx, body.trim())).map_err(|e| format!("write failed: {e}"))
+            }
+            Err(e) => self.log("servertime_failed", &e.to_string()),
+        }
+    }
+
     fn snapshots(&mut self) -> Result<(), String> {
+        self.server_time()?;
         for sym in self.symbols.clone() {
             match self.rest.get(&self.market.snapshot_url(&sym)).call() {
                 Ok(resp) => {
