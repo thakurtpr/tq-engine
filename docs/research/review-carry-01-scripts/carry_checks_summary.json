@@ -1,0 +1,12 @@
+{
+ "BTCUSDT": {
+  "gaps": 22,
+  "lost_funding_payments": 36,
+  "lost_sum": 0.0011644000000000001
+ },
+ "ETHUSDT": {
+  "gaps": 19,
+  "lost_funding_payments": 18,
+  "lost_sum": 0.00154107
+ }
+}

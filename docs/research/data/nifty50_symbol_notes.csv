@@ -1,0 +1,20 @@
+symbol,company,note,certainty
+HDFC,HDFC Ltd,"merged into HDFCBANK; removed from Nifty 50 on 2023-07-13 (table reason: Merger); merger effective ~2023-07-01 (my knowledge, unverified)",table
+STER,Sterlite Industries,"removed 2012-09-28; later merged into Sesa Goa (2013, my knowledge)",table+knowledge
+SESAGOA,Sesa Goa -> Sesa Sterlite -> Vedanta Ltd,"same company, key VEDL; symbols SESAGOA until ~2013-08-17, SESASTERLITE until ~2015-04-01, VEDL after. Rename dates APPROXIMATE (my knowledge); snapshot dates are not sensitive to them",approx
+SESASTERLITE,Sesa Sterlite,see SESAGOA,approx
+VEDL,Vedanta Ltd,"member 2010-10-01..2016-03 (as SESAGOA/SESASTERLITE/VEDL), again 2017-05-26..2020-07-31; table calls it Vedanta",table
+RANBAXY,Ranbaxy Laboratories,removed 2014-03-28; merged into SUNPHARMA in 2015 (my knowledge),table+knowledge
+CAIRN,Cairn India,removed 2016-04-01 (table: Merger); merged into Vedanta (my knowledge),table
+INFRATEL,Bharti Infratel,removed 2020-09-25 (table: Merger with Indus Towers); later symbol INDUSTOWER (my knowledge),table+knowledge
+IDEA,Idea Cellular / Vodafone Idea,symbol IDEA unchanged across the 2018 rename,knowledge
+IDFC,IDFC Ltd,"removed 2015-05-29; later merged into IDFC First Bank (IDFCFIRSTB), my knowledge",table+knowledge
+IBULHSGFIN,Indiabulls Housing Finance,member 2017-03-31..2019-09-27; later renamed Sammaan Capital (my knowledge),table+knowledge
+MCDOWELL-N,United Spirits,NSE symbol assumed MCDOWELL-N while a member (2014-03-28..2014-09-19); symbol at that time UNVERIFIED (later UNITDSPR),unverified
+LTIM,LTIMindtree,"formed by L&T Infotech + Mindtree merger (LTI->LTIM, ~2022-11); Nifty member 2023-07-13..2024-09-30 as LTIM",table+knowledge
+SHRIRAMFIN,Shriram Finance,formed by merger of Shriram Transport Finance and Shriram City Union (2022); added 2024-03-28,table+knowledge
+ETERNAL,Eternal (ex Zomato),symbol ZOMATO until 2025 rename; Nifty added 2025-03-28 as ETERNAL,table
+TATAMOTORS,Tata Motors -> Tata Motors Passenger Vehicles,"symbol TATAMOTORS until 2025-10-24, TMPV after (NSE circular dated 2025-10-16, via search summary). Demerged CV entity (TMCV, dummy symbol DUMMYTATAM) was added to Nifty 50 from 2025-10-14 and excluded effective 2025-11-17 per NSE press release 13 Nov 2025, so Nifty 50 had 51 constituents for about a month. NOT in the CSVs.",external
+BSE,BSE Ltd,"added 2026-09-30 in place of Wipro (NSE Indices announcement effective after close 2026-09-29; confirmed by several news reports, Wikipedia row has no reference)",news
+WIPRO,Wipro,"removed 2013-04-01 (demerger), re-added 2013-09-27, removed 2026-09-30",table
+HEROMOTOCO,Hero MotoCorp,member throughout window until removed 2025-09-30; its original inclusion predates the table,table

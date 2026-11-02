@@ -1,0 +1,5 @@
+# thakur-op2 heavy-job log for the l2 recording period. Format: start_utc | end_utc | who | job   (times approximate to the minute; mirrors engine/data/l2/heavy-jobs.log, which op2 does not write)
+# From 2026-11-02 19:00 UTC every job below runs under `nice -n 19`.
+2026-11-02T18:34 | 2026-11-02T18:36 | thakur-op2 | python3 gate1_replica.py on first 3 dev-slice files (about 5 s CPU, read-only)
+2026-11-02T18:40 | 2026-11-02T18:50 | thakur-op2 | repeated gate1_replica.py runs and small python scans of the legacy-notrades files, each under 10 s CPU
+2026-11-02T18:52 | 2026-11-02T18:58 | thakur-op2 | tq-mm-gate1 and tq-mm-sim on the live dev slice and on synthetic scenarios (each run a few seconds, read-only)

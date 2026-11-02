@@ -1,0 +1,90 @@
+{
+ "files": [
+  "2026-11-02T18.jsonl.gz",
+  "2026-11-02T18.jsonl.gz.1",
+  "2026-11-02T18.jsonl.gz.2"
+ ],
+ "file_stats": {
+  "link_connect": 3,
+  "link_stop": 1,
+  "unfinished_gzip_files": 2
+ },
+ "symbols": {
+  "BTCUSDT": {
+   "counters": {
+    "stale": 8,
+    "bt_total": 647745,
+    "depth_events": 11694,
+    "applied": 11686,
+    "bt_checked": 736,
+    "snap_checked_deferred": 1,
+    "snap_checked": 1,
+    "snap_strict_ok_1": 1,
+    "snap_strict_n_1": 1,
+    "snap_strict_ok_5": 1,
+    "snap_strict_n_5": 1,
+    "snap_strict_ok_20": 1,
+    "snap_strict_n_20": 1,
+    "snap_lenient_ok_1": 1,
+    "snap_lenient_n_1": 1,
+    "snap_lenient_ok_5": 1,
+    "snap_lenient_n_5": 1,
+    "snap_lenient_ok_20": 1,
+    "snap_lenient_n_20": 1,
+    "full_levels_compared": 1953,
+    "full_mismatched_levels": 0,
+    "full_sides_checked": 2,
+    "full_sides_ok": 2,
+    "untouched_in_top40_min": 36
+   },
+   "wall_ms": 1259507,
+   "verified_ms": 1191176,
+   "verified_share": 0.9457478203773381,
+   "lat_raw_median_of_minute_medians": 51.0,
+   "lat_p99_max_minute": 472,
+   "minutes_p99_over_500": 0,
+   "minutes": 21,
+   "minutes_unprobed": 7,
+   "lat_corrected_median": 116.0,
+   "last_offset_ms": 106.0
+  },
+  "ETHUSDT": {
+   "counters": {
+    "stale": 12,
+    "bt_total": 672299,
+    "depth_events": 11671,
+    "applied": 11659,
+    "bt_checked": 851,
+    "snap_checked_deferred": 1,
+    "snap_checked": 1,
+    "snap_strict_ok_1": 1,
+    "snap_strict_n_1": 1,
+    "snap_strict_ok_5": 1,
+    "snap_strict_n_5": 1,
+    "snap_strict_ok_20": 1,
+    "snap_strict_n_20": 1,
+    "snap_lenient_ok_1": 1,
+    "snap_lenient_n_1": 1,
+    "snap_lenient_ok_5": 1,
+    "snap_lenient_n_5": 1,
+    "snap_lenient_ok_20": 1,
+    "snap_lenient_n_20": 1,
+    "full_levels_compared": 1693,
+    "full_mismatched_levels": 0,
+    "full_sides_checked": 2,
+    "full_sides_ok": 2,
+    "untouched_in_top40_min": 3
+   },
+   "wall_ms": 1259487,
+   "verified_ms": 1191131,
+   "verified_share": 0.9457271095295148,
+   "lat_raw_median_of_minute_medians": 51,
+   "lat_p99_max_minute": 442,
+   "minutes_p99_over_500": 0,
+   "minutes": 21,
+   "minutes_unprobed": 7,
+   "lat_corrected_median": 116.5,
+   "last_offset_ms": 106.0
+  }
+ }
+}
