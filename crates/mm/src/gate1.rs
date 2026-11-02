@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, VecDeque};
 use chrono::DateTime;
 
 use crate::record::{Line, Record};
-use crate::sync::{DepthEv, DepthOutcome, SnapOutcome, SymbolSync};
+use crate::sync::{DepthEv, DepthOutcome, SnapCheck, SnapOutcome, SymbolSync};
 
 const HOUR_MS: i64 = 3_600_000;
 const MINUTE_MS: i64 = 60_000;
@@ -41,6 +41,8 @@ struct SymStats {
     crossed: u64,
     snaps_checked: u64,
     snaps_match: [u64; 3],
+    snaps_full_match: u64,
+    snaps_compared_min: Option<usize>,
     snaps_uncheckable: u64,
     /// bookTickers with an update id ahead of the book, waiting for the depth event ending at it.
     /// WHY: bookTicker is real time and depth is batched per 100 ms, so the two books agree only
@@ -122,8 +124,8 @@ impl SymStats {
             DepthOutcome::Stale => self.stale += 1,
             DepthOutcome::Buffered => {}
         }
-        if check.is_some() {
-            self.snapshot_result(check);
+        if let Some(c) = check {
+            self.snapshot_result(c);
         }
         self.last_depth_rx = Some(rx);
     }
@@ -151,16 +153,17 @@ impl SymStats {
         }
     }
 
-    fn snapshot_result(&mut self, r: Option<[bool; 3]>) {
-        match r {
-            None => self.snaps_uncheckable += 1,
-            Some(m) => {
-                self.snaps_checked += 1;
-                for (i, ok) in m.iter().enumerate() {
-                    self.snaps_match[i] += u64::from(*ok);
-                }
-            }
+    fn snapshot_result(&mut self, r: Option<SnapCheck>) {
+        let Some(c) = r else {
+            self.snaps_uncheckable += 1;
+            return;
+        };
+        self.snaps_checked += 1;
+        for (i, ok) in c.top.iter().enumerate() {
+            self.snaps_match[i] += u64::from(*ok);
         }
+        self.snaps_full_match += u64::from(c.full);
+        self.snaps_compared_min = Some(self.snaps_compared_min.map_or(c.compared, |m| m.min(c.compared)));
     }
 
     fn reset_link(&mut self) {
@@ -178,13 +181,16 @@ pub struct Verdict {
     pub verified_share: f64,
     pub breaks_per_6h: f64,
     pub snapshot_l20: f64,
+    pub snapshot_full: f64,
 }
 
 impl Verdict {
+    /// The spec's L20 rule, and (review-gate1-19) the same bar for every untouched level.
     pub fn passes(&self) -> bool {
         self.verified_share >= PASS_VERIFIED_SHARE
             && self.breaks_per_6h <= PASS_BREAKS_PER_6H
             && self.snapshot_l20 >= PASS_SNAPSHOT_L20
+            && self.snapshot_full >= PASS_SNAPSHOT_L20
     }
 }
 
@@ -235,8 +241,10 @@ impl Gate1 {
         self.first_rx.map_or(0, |f| self.last_rx - f)
     }
 
-    fn offset_at(&self, t: i64) -> Option<i64> {
-        self.probes.iter().rev().find(|p| p.0 <= t && t - p.0 <= PROBE_MAX_AGE_MS).map(|p| p.1)
+    /// (offset, round trip) of the lowest-round-trip probe in the 20 min before `t`.
+    /// WHY: the offset is only known to +/- RTT/2, so the tightest recent probe is the best estimate.
+    fn offset_at(&self, t: i64) -> Option<(i64, i64)> {
+        self.probes.iter().filter(|p| p.0 <= t && t - p.0 <= PROBE_MAX_AGE_MS).min_by_key(|p| p.2).map(|p| (p.1, p.2))
     }
 
     pub fn verdicts(&self) -> Vec<Verdict> {
@@ -248,6 +256,7 @@ impl Gate1 {
                 verified_share: s.verified_ms as f64 / span,
                 breaks_per_6h: s.breaks.len() as f64 / (span / (6 * HOUR_MS) as f64),
                 snapshot_l20: share(s.snaps_match[2], s.snaps_checked),
+                snapshot_full: share(s.snaps_full_match, s.snaps_checked),
             })
             .collect()
     }
@@ -283,13 +292,13 @@ impl Gate1 {
     fn integrity_table(&self) -> Vec<String> {
         let mut o = vec![
             String::new(),
-            "| symbol | depth events | verified time | breaks (per 6 h) | resets on reconnect | sync failed | stale | silences > 1 s | crossed | snapshots L1 / L5 / L20 (checked, uncheckable) | bookTicker at same update id: price match | PASS |".into(),
+            "| symbol | depth events | verified time | breaks (per 6 h) | resets on reconnect | sync failed | stale | silences > 1 s | crossed | snapshots L1 / L5 / L20 / all untouched (checked, uncheckable, fewest levels compared) | bookTicker at same update id: price match | PASS |".into(),
             "|---|---|---|---|---|---|---|---|---|---|---|---|".into(),
         ];
         for (v, s) in self.verdicts().iter().zip(self.syms.values()) {
             let m = |i: usize| share(s.snaps_match[i], s.snaps_checked) * 100.0;
             o.push(format!(
-                "| {} | {} | {:.2}% | {} ({:.2}) | {} | {} | {} | {} | {} | {:.1}% / {:.1}% / {:.1}% ({}, {}) | {:.2}% of {} | {} |",
+                "| {} | {} | {:.2}% | {} ({:.2}) | {} | {} | {} | {} | {} | {:.1}% / {:.1}% / {:.1}% / {:.1}% ({}, {}, {}) | {:.2}% of {} | {} |",
                 v.sym,
                 s.events,
                 v.verified_share * 100.0,
@@ -303,8 +312,10 @@ impl Gate1 {
                 m(0),
                 m(1),
                 m(2),
+                v.snapshot_full * 100.0,
                 s.snaps_checked,
                 s.snaps_uncheckable,
+                s.snaps_compared_min.map_or("n/a".to_string(), |n| n.to_string()),
                 share(s.tickers_price_match, s.tickers_checked) * 100.0,
                 s.tickers_checked,
                 if v.passes() { "yes" } else { "**no**" }
@@ -322,21 +333,26 @@ impl Gate1 {
             "|---|---|---|---|---|---|".into(),
         ];
         for (sym, s) in &self.syms {
-            let (mut meds, mut cmeds, mut worst, mut slow, mut unprobed) = (vec![], vec![], i64::MIN, 0, 0);
+            let (mut meds, mut cmeds, mut rtts, mut worst, mut slow, mut unprobed) = (vec![], vec![], vec![], i64::MIN, 0, 0);
             for (minute, samples) in &s.latency {
                 let mut v = samples.clone();
                 let (med, p99) = (pct(&mut v, 0.5), pct(&mut v, 0.99));
                 meds.push(med);
                 worst = worst.max(p99);
                 match self.offset_at(minute * MINUTE_MS) {
-                    Some(off) => {
+                    Some((off, rtt)) => {
                         cmeds.push(med + off);
+                        rtts.push(rtt);
                         slow += u64::from(p99 + off > LATENCY_P99_LIMIT_MS);
                     }
                     None => unprobed += 1,
                 }
             }
-            let cm = if cmeds.is_empty() { "n/a".to_string() } else { pct(&mut cmeds, 0.5).to_string() };
+            let cm = if cmeds.is_empty() {
+                "n/a".to_string()
+            } else {
+                format!("{} (probe RTT median {} ms, so +/- {} ms)", pct(&mut cmeds, 0.5), pct(&mut rtts, 0.5), pct(&mut rtts, 0.5) / 2)
+            };
             o.push(format!("| {sym} | {} | {} / {cm} ms | {worst} ms | {slow} | {unprobed} |", meds.len(), pct(&mut meds, 0.5)));
         }
         o
